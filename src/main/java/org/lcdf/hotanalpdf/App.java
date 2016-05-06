@@ -12,14 +12,21 @@ import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfName;
 import com.itextpdf.text.pdf.PdfObject;
 import com.itextpdf.text.pdf.PdfIndirectReference;
+import com.itextpdf.text.pdf.PRIndirectReference;
 import com.itextpdf.text.pdf.PdfStream;
 import com.itextpdf.text.pdf.PdfArray;
 import com.itextpdf.text.pdf.PdfPage;
+import com.itextpdf.text.pdf.BaseFont;
+import com.itextpdf.text.FontFactory;
  
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.TreeSet;
+
+import org.apache.commons.io.IOUtils;
+
  
 public class App {
     private TreeSet<String> viewed_font_refs;
@@ -36,13 +43,19 @@ public class App {
         PdfReader reader = new PdfReader(src);
         checkFonts(reader);
         PdfStamper stamper = new PdfStamper(reader, dest);
-        Font font = new Font(FontFamily.TIMES_ROMAN, 9);
+
+        java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
+        byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
+        BaseFont numberFont = BaseFont.createFont("HotCRPNumberTime.otf", BaseFont.WINANSI, true, false, numberFontBytes, null);
+        Font font = new Font(numberFont, 9);
+
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
             Phrase pageno = new Phrase(Integer.toString(153 + p), font);
             ColumnText.showTextAligned(
                 stamper.getOverContent(p), Element.ALIGN_CENTER,
                 pageno, reader.getPageSize(p).getWidth() / 2, 28, 0);
         }
+
         stamper.close();
         reader.close();
     }
