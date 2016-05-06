@@ -26,39 +26,106 @@ import java.io.IOException;
 import java.util.TreeSet;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.DefaultParser;
+import org.apache.commons.cli.ParseException;
+import org.apache.commons.cli.HelpFormatter;
 
  
 public class App {
     private TreeSet<String> viewed_font_refs;
     public static final String SRC = "x.pdf";
     public static final String DEST = "xout.pdf";
+
+    public static void main(String[] args) throws IOException, DocumentException, NumberFormatException, ParseException {
+        new App().runMain(args);
+    }
+
     public App() {
         viewed_font_refs = new TreeSet<String>();
     }
-    public static void main(String[] args) throws IOException, DocumentException {
-        File file = new File(DEST);
-        new App().manipulatePdf(SRC, new FileOutputStream(DEST));
-    }
-    public void manipulatePdf(String src, java.io.OutputStream dest) throws IOException, DocumentException {
-        PdfReader reader = new PdfReader(src);
-        checkFonts(reader);
-        PdfStamper stamper = new PdfStamper(reader, dest);
 
+    public CommandLine parseArgs(String[] args) {
+        Options options = new Options();
+        options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
+                          .hasArg(true).argName("PAGENO").build());
+        options.addOption(Option.builder("o").longOpt("output").desc("write output to FILE")
+                          .hasArg(true).argName("FILE").build());
+        options.addOption(Option.builder().longOpt("help").desc("print this message").build());
+        int status = 0;
+
+        try {
+            CommandLine cl = new DefaultParser().parse(options, args);
+            if (cl.hasOption('p'))
+                Integer.parseInt(cl.getOptionValue('p'));
+            if (cl.getArgs().length > (cl.hasOption('o') ? 1 : 2))
+                throw new NumberFormatException();
+            if (!cl.hasOption("help"))
+                return cl;
+        } catch (Throwable e) {
+            status = 1;
+        }
+
+        HelpFormatter formatter = new HelpFormatter();
+        formatter.printHelp("hotanalpdf", "Check and/or paginate PDFs for HotCRP.", options, "\nPlease report issues at https://github.com/kohler/hotanalpdf", true);
+        System.exit(status);
+        return null;
+    }
+
+    public void runMain(String[] args) throws IOException, DocumentException, NumberFormatException {
+        CommandLine cl = parseArgs(args);
+
+        int firstPage = 0;
+        if (cl.hasOption('p'))
+            firstPage = Integer.parseInt(cl.getOptionValue('p'));
+
+        PdfReader reader;
+        if (cl.getArgs().length == 0 || cl.getArgs()[0] == "-")
+            reader = new PdfReader(System.in);
+        else
+            reader = new PdfReader(cl.getArgs()[0]);
+
+        checkFonts(reader);
+
+        PdfStamper stamper = null;
+        if (cl.hasOption('p') || cl.hasOption('o') || cl.getArgs().length == 2) {
+            java.io.OutputStream output;
+            String outputName = "-";
+            if (cl.hasOption('o'))
+                outputName = cl.getOptionValue('o');
+            else if (cl.getArgs().length == 2)
+                outputName = cl.getArgs()[1];
+            if (outputName == "-")
+                output = System.out;
+            else
+                output = new FileOutputStream(outputName);
+            stamper = new PdfStamper(reader, output);
+        }
+
+        if (cl.hasOption('p'))
+            paginate(firstPage, reader, stamper);
+
+        if (stamper != null)
+            stamper.close();
+        reader.close();
+    }
+
+    public void paginate(int firstPage, PdfReader reader, PdfStamper stamper) throws IOException, DocumentException {
         java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
         byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
         BaseFont numberFont = BaseFont.createFont("HotCRPNumberTime.otf", BaseFont.WINANSI, true, false, numberFontBytes, null);
         Font font = new Font(numberFont, 9);
 
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
-            Phrase pageno = new Phrase(Integer.toString(153 + p), font);
+            Phrase pageno = new Phrase(Integer.toString(firstPage + p - 1), font);
             ColumnText.showTextAligned(
                 stamper.getOverContent(p), Element.ALIGN_CENTER,
                 pageno, reader.getPageSize(p).getWidth() / 2, 28, 0);
         }
-
-        stamper.close();
-        reader.close();
     }
+
     public void checkFonts(PdfReader reader) throws IOException, DocumentException {
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
             PdfDictionary page = reader.getPageN(p);
