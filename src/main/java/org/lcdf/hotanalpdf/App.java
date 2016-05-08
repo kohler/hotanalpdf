@@ -24,6 +24,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.TreeSet;
+import java.util.Vector;
+import javax.json.Json;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.cli.Options;
@@ -35,35 +37,64 @@ import org.apache.commons.cli.HelpFormatter;
 
  
 public class App {
-    private TreeSet<String> viewed_font_refs;
-    public static final String SRC = "x.pdf";
-    public static final String DEST = "xout.pdf";
+    private Vector<String> errors = new Vector<String>();
+    private int errorTypes = 0;
+    private TreeSet<String> viewed_font_refs = new TreeSet<String>();
+
+    public final int ERR_FONT_TYPE3 = 1;
+    public final int ERR_FONT_NOTEMBEDDED = 2;
+
+    public class AppArgs {
+        public boolean paginate = false;
+        public int firstPage = 0;
+        public int pageNumberSize = 9;
+        public String inputFile = "-";
+        public boolean outputFileGiven = false;
+        public String outputFile = "-";
+    }
 
     public static void main(String[] args) throws IOException, DocumentException, NumberFormatException, ParseException {
         new App().runMain(args);
     }
 
-    public App() {
-        viewed_font_refs = new TreeSet<String>();
+    private void addError(int errorType, String error) {
+        errors.add(error);
+        errorTypes |= errorType;
+        System.err.println(error);
     }
 
-    public CommandLine parseArgs(String[] args) {
+    public AppArgs parseArgs(String[] args) {
         Options options = new Options();
         options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
                           .hasArg(true).argName("PAGENO").build());
         options.addOption(Option.builder("o").longOpt("output").desc("write output to FILE")
                           .hasArg(true).argName("FILE").build());
+        options.addOption(Option.builder().longOpt("page-number-size").desc("page number size [9]")
+                          .hasArg(true).argName("").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
         int status = 0;
 
         try {
             CommandLine cl = new DefaultParser().parse(options, args);
-            if (cl.hasOption('p'))
-                Integer.parseInt(cl.getOptionValue('p'));
+            AppArgs appArgs = new AppArgs();
+            if (cl.hasOption('p')) {
+                appArgs.paginate = true;
+                appArgs.firstPage = Integer.parseInt(cl.getOptionValue('p'));
+            }
+            if (cl.hasOption("page-number-size"))
+                appArgs.pageNumberSize = Integer.parseInt(cl.getOptionValue("page-number-size"));
             if (cl.getArgs().length > (cl.hasOption('o') ? 1 : 2))
                 throw new NumberFormatException();
+            if (cl.getArgs().length > 0)
+                appArgs.inputFile = cl.getArgs()[0];
+            if (cl.hasOption('o') || cl.getArgs().length > 1)
+                appArgs.outputFileGiven = true;
+            if (cl.hasOption('o'))
+                appArgs.outputFile = cl.getOptionValue('o');
+            else if (cl.getArgs().length > 1)
+                appArgs.outputFile = cl.getArgs()[1];
             if (!cl.hasOption("help"))
-                return cl;
+                return appArgs;
         } catch (Throwable e) {
             status = 1;
         }
@@ -75,51 +106,43 @@ public class App {
     }
 
     public void runMain(String[] args) throws IOException, DocumentException, NumberFormatException {
-        CommandLine cl = parseArgs(args);
-
-        int firstPage = 0;
-        if (cl.hasOption('p'))
-            firstPage = Integer.parseInt(cl.getOptionValue('p'));
+        AppArgs aa = parseArgs(args);
 
         PdfReader reader;
-        if (cl.getArgs().length == 0 || cl.getArgs()[0] == "-")
+        if (aa.inputFile == "-")
             reader = new PdfReader(System.in);
         else
-            reader = new PdfReader(cl.getArgs()[0]);
+            reader = new PdfReader(aa.inputFile);
 
         checkFonts(reader);
 
         PdfStamper stamper = null;
-        if (cl.hasOption('p') || cl.hasOption('o') || cl.getArgs().length == 2) {
+        if (aa.paginate || aa.outputFileGiven) {
             java.io.OutputStream output;
-            String outputName = "-";
-            if (cl.hasOption('o'))
-                outputName = cl.getOptionValue('o');
-            else if (cl.getArgs().length == 2)
-                outputName = cl.getArgs()[1];
-            if (outputName == "-")
+            if (aa.outputFile == "-")
                 output = System.out;
             else
-                output = new FileOutputStream(outputName);
+                output = new FileOutputStream(aa.outputFile);
             stamper = new PdfStamper(reader, output);
         }
 
-        if (cl.hasOption('p'))
-            paginate(firstPage, reader, stamper);
+        if (aa.paginate)
+            paginate(aa, reader, stamper);
 
         if (stamper != null)
             stamper.close();
         reader.close();
+        System.exit(errors.isEmpty() ? 0 : 1);
     }
 
-    public void paginate(int firstPage, PdfReader reader, PdfStamper stamper) throws IOException, DocumentException {
+    public void paginate(AppArgs aa, PdfReader reader, PdfStamper stamper) throws IOException, DocumentException {
         java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
         byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
         BaseFont numberFont = BaseFont.createFont("HotCRPNumberTime.otf", BaseFont.WINANSI, true, false, numberFontBytes, null);
-        Font font = new Font(numberFont, 9);
+        Font font = new Font(numberFont, aa.pageNumberSize);
 
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
-            Phrase pageno = new Phrase(Integer.toString(firstPage + p - 1), font);
+            Phrase pageno = new Phrase(Integer.toString(aa.firstPage + p - 1), font);
             ColumnText.showTextAligned(
                 stamper.getOverContent(p), Element.ALIGN_CENTER,
                 pageno, reader.getPageSize(p).getWidth() / 2, 28, 0);
@@ -127,6 +150,7 @@ public class App {
     }
 
     public void checkFonts(PdfReader reader) throws IOException, DocumentException {
+        // parsing/traversing borrowed from `poppler/util/pdffonts`
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
             PdfDictionary page = reader.getPageN(p);
             PdfDictionary res = page.getAsDict(PdfName.RESOURCES);
@@ -179,6 +203,9 @@ public class App {
                     checkFontsDict(p, strres);
             }
         }
+    }
+    static public String friendlyFontName(String fontName) {
+        return fontName.replace("#20", " ");
     }
     public void checkFont(int p, PdfObject fontobj) {
         String refname = "[direct]";
@@ -240,6 +267,9 @@ public class App {
         if (claimed_type == null)
             claimed_type = declared_type;
 
-        System.err.println(refname + " " + namestr + " " + claimed_type.toString() + ";" + (embedded_type == null ? "not embedded" : embedded_type.toString()));
+        if (claimed_type.equals(PdfName.TYPE3))
+            addError(ERR_FONT_TYPE3, "document contains Type3 font “" + friendlyFontName(namestr) + "” (first referenced on page " + p + ")");
+        else if (embedded_type == null)
+            addError(ERR_FONT_NOTEMBEDDED, claimed_type.toString().substring(1) + " font “" + friendlyFontName(namestr) + "” not embedded (first referenced on page " + p + ")");
     }
 }
