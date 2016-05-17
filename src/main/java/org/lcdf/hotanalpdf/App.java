@@ -14,6 +14,7 @@ import com.itextpdf.text.pdf.PdfObject;
 import com.itextpdf.text.pdf.PdfIndirectReference;
 import com.itextpdf.text.pdf.PRIndirectReference;
 import com.itextpdf.text.pdf.PdfStream;
+import com.itextpdf.text.pdf.PdfString;
 import com.itextpdf.text.pdf.PdfArray;
 import com.itextpdf.text.pdf.PdfPage;
 import com.itextpdf.text.pdf.BaseFont;
@@ -38,11 +39,15 @@ import org.apache.commons.cli.HelpFormatter;
  
 public class App {
     private Vector<String> errors = new Vector<String>();
+    private TreeSet<String> errorsGiven = new TreeSet<String>();
     private int errorTypes = 0;
     private TreeSet<String> viewed_font_refs = new TreeSet<String>();
+    private boolean documentModified = false;
 
     public final int ERR_FONT_TYPE3 = 1;
     public final int ERR_FONT_NOTEMBEDDED = 2;
+    public final int ERR_JAVASCRIPT = 4;
+    public final int ERR_ANONYMITY = 8;
 
     public class AppArgs {
         public boolean paginate = false;
@@ -51,6 +56,9 @@ public class App {
         public String inputFile = "-";
         public boolean outputFileGiven = false;
         public String outputFile = "-";
+        public boolean checkJS = false;
+        public boolean checkAnonymity = false;
+        public boolean strip = false;
     }
 
     public static void main(String[] args) throws IOException, DocumentException, NumberFormatException, ParseException {
@@ -58,17 +66,23 @@ public class App {
     }
 
     private void addError(int errorType, String error) {
-        errors.add(error);
         errorTypes |= errorType;
-        System.err.println(error);
+        if (!errorsGiven.contains(error)) {
+            errors.add(error);
+            errorsGiven.add(error);
+            System.err.println(error);
+        }
     }
 
     public AppArgs parseArgs(String[] args) {
         Options options = new Options();
-        options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
-                          .hasArg(true).argName("PAGENO").build());
         options.addOption(Option.builder("o").longOpt("output").desc("write output to FILE")
                           .hasArg(true).argName("FILE").build());
+        options.addOption(Option.builder("j").longOpt("js").desc("check JavaScript actions").build());
+        options.addOption(Option.builder("a").longOpt("anonymity").desc("check metadata for anonymity").build());
+        options.addOption(Option.builder("s").longOpt("strip").desc("strip JS/metadata").build());
+        options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
+                          .hasArg(true).argName("PAGENO").build());
         options.addOption(Option.builder().longOpt("page-number-size").desc("page number size [9]")
                           .hasArg(true).argName("").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
@@ -93,6 +107,16 @@ public class App {
                 appArgs.outputFile = cl.getOptionValue('o');
             else if (cl.getArgs().length > 1)
                 appArgs.outputFile = cl.getArgs()[1];
+            if (cl.hasOption('j'))
+                appArgs.checkJS = true;
+            if (cl.hasOption('a'))
+                appArgs.checkAnonymity = true;
+            if (cl.hasOption('s'))
+                appArgs.strip = true;
+            if (appArgs.strip && !appArgs.checkJS && !appArgs.checkAnonymity) {
+                System.err.println("`--strip` requires `--js` or `--anonymity`");
+                throw new NumberFormatException();
+            }
             if (!cl.hasOption("help"))
                 return appArgs;
         } catch (Throwable e) {
@@ -115,6 +139,10 @@ public class App {
             reader = new PdfReader(aa.inputFile);
 
         checkFonts(reader);
+        if (aa.checkJS)
+            checkJavascripts(reader, aa.strip);
+        if (aa.checkAnonymity)
+            checkAnonymity(reader, aa.strip);
 
         PdfStamper stamper = null;
         if (aa.paginate || aa.outputFileGiven) {
@@ -146,6 +174,7 @@ public class App {
             ColumnText.showTextAligned(
                 stamper.getOverContent(p), Element.ALIGN_CENTER,
                 pageno, reader.getPageSize(p).getWidth() / 2, 28, 0);
+            documentModified = true;
         }
     }
 
@@ -271,5 +300,87 @@ public class App {
             addError(ERR_FONT_TYPE3, "document contains Type3 font “" + friendlyFontName(namestr) + "” (first referenced on page " + p + ")");
         else if (embedded_type == null)
             addError(ERR_FONT_NOTEMBEDDED, claimed_type.toString().substring(1) + " font “" + friendlyFontName(namestr) + "” not embedded (first referenced on page " + p + ")");
+    }
+
+    public void checkJavascripts(PdfReader reader, boolean strip) throws IOException, DocumentException {
+        PdfDictionary doccatalog = reader.getCatalog();
+        PdfDictionary aa = doccatalog.getAsDict(PdfName.AA);
+        if (aa != null)
+            checkJavascripts(aa, strip, " at document level");
+
+        PdfDictionary names = doccatalog.getAsDict(PdfName.NAMES);
+        if (names != null) {
+            if (names.get(PdfName.JAVASCRIPT) != null)
+                recordJavascript(names, PdfName.JAVASCRIPT, strip, " in global scripts");
+        }
+
+        PdfDictionary form = doccatalog.getAsDict(PdfName.ACROFORM);
+        if (form != null) {
+            PdfArray fields = doccatalog.getAsArray(PdfName.FIELDS);
+            for (int j = 0; j < fields.size(); ++j)
+                checkFormFieldJavascripts(fields.getAsDict(j), strip);
+        }
+
+        for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
+            PdfDictionary page = reader.getPageN(p);
+            aa = page.getAsDict(PdfName.AA);
+            if (aa != null)
+                checkJavascripts(aa, strip, " on page " + p);
+            PdfArray annots = page.getAsArray(PdfName.ANNOTS);
+            if (annots != null)
+                for (int j = 0; j < annots.size(); j++) {
+                    PdfDictionary annot = annots.getAsDict(j);
+                    aa = annot.getAsDict(PdfName.AA);
+                    if (aa != null)
+                        checkJavascripts(aa, strip, " in page " + p + " annotation");
+                }
+        }
+    }
+    private void checkFormFieldJavascripts(PdfDictionary field, boolean strip) {
+        PdfDictionary aa = field.getAsDict(PdfName.AA);
+        if (aa != null)
+            checkJavascripts(aa, strip, " in form");
+
+        PdfArray kids = field.getAsArray(PdfName.KIDS);
+        for (int j = 0; j < kids.size(); ++j)
+            checkFormFieldJavascripts(kids.getAsDict(j), strip);
+    }
+    private void checkJavascripts(PdfDictionary holder, boolean strip, String where) {
+        for (PdfName key : holder.getKeys()) {
+            PdfDictionary value = holder.getAsDict(key);
+            PdfObject stype = null;
+            if (value != null)
+                stype = value.get(PdfName.S);
+            if (stype == null || !stype.isName())
+                continue;
+            PdfName sname = (PdfName) stype;
+            if (stype == PdfName.JAVASCRIPT)
+                recordJavascript(holder, key, strip, where);
+            else if (stype == PdfName.RENDITION && value.get(PdfName.JS) != null)
+                recordJavascript(value, PdfName.JS, strip, where + " [rendition]");
+            else if (stype == PdfName.IMPORTDATA)
+                recordJavascript(holder, key, strip, where + " [import data]");
+        }
+    }
+    private void recordJavascript(PdfDictionary holder, PdfName key, boolean strip, String where) {
+        if (strip) {
+            documentModified = true;
+            holder.remove(key);
+        }
+        addError(ERR_JAVASCRIPT, (strip ? "stripping " : "document contains ") + "JavaScript actions" + where);
+    }
+
+    public void checkAnonymity(PdfReader reader, boolean strip) {
+        PdfDictionary trailer = reader.getTrailer();
+        PdfDictionary info = trailer != null ? trailer.getAsDict(PdfName.INFO) : null;
+        if (info != null && info.get(PdfName.AUTHOR) != null) {
+            PdfString author = info.getAsString(PdfName.AUTHOR);
+            if (strip) {
+                documentModified = true;
+                info.remove(PdfName.AUTHOR);
+            }
+            addError(ERR_ANONYMITY, (strip ? "stripping " : "document contains ") + "author information" + (author == null ? "" : "“" + author.toString() + "”"));
+        }
+        // XXX should also strip all XMP metadata but fuck it
     }
 }
