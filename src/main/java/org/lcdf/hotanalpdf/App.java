@@ -24,6 +24,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.io.StringWriter;
 import java.util.TreeSet;
 import java.util.Vector;
@@ -202,7 +203,8 @@ public class App {
             try (JsonWriter jsonWriter = Json.createWriter(stWriter)) {
                 jsonWriter.write(result.build());
             }
-            System.out.println(stWriter.toString());
+            PrintStream out = new PrintStream(System.out, true, "UTF-8");
+            out.println(stWriter.toString());
         }
 
         System.exit(errorTypes == 0 ? 0 : 1);
