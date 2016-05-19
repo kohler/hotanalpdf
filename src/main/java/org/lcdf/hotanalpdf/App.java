@@ -24,9 +24,14 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.StringWriter;
 import java.util.TreeSet;
 import java.util.Vector;
 import javax.json.Json;
+import javax.json.JsonObject;
+import javax.json.JsonArrayBuilder;
+import javax.json.JsonObjectBuilder;
+import javax.json.JsonWriter;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.cli.Options;
@@ -41,8 +46,11 @@ public class App {
     private Vector<String> errors = new Vector<String>();
     private TreeSet<String> errorsGiven = new TreeSet<String>();
     private int errorTypes = 0;
-    private TreeSet<String> viewed_font_refs = new TreeSet<String>();
+    private TreeSet<String> viewedFontRefs = new TreeSet<String>();
+    private TreeSet<String> type3FontNames = new TreeSet<String>();
+    private TreeSet<String> nonEmbeddedFontNames = new TreeSet<String>();
     private boolean documentModified = false;
+    private boolean jsonOutput = false;
 
     public final int ERR_FONT_TYPE3 = 1;
     public final int ERR_FONT_NOTEMBEDDED = 2;
@@ -56,6 +64,8 @@ public class App {
         public String inputFile = "-";
         public boolean outputFileGiven = false;
         public String outputFile = "-";
+        public boolean jsonOutput = false;
+        public boolean checkFonts = false;
         public boolean checkJS = false;
         public boolean checkAnonymity = false;
         public boolean strip = false;
@@ -70,16 +80,19 @@ public class App {
         if (!errorsGiven.contains(error)) {
             errors.add(error);
             errorsGiven.add(error);
-            System.err.println(error);
+            if (!jsonOutput)
+                System.err.println(error);
         }
     }
 
     public AppArgs parseArgs(String[] args) {
         Options options = new Options();
-        options.addOption(Option.builder("o").longOpt("output").desc("write output to FILE")
+        options.addOption(Option.builder("o").longOpt("output").desc("write output PDF to FILE")
                           .hasArg(true).argName("FILE").build());
-        options.addOption(Option.builder("j").longOpt("js").desc("check JavaScript actions").build());
-        options.addOption(Option.builder("a").longOpt("anonymity").desc("check metadata for anonymity").build());
+        options.addOption(Option.builder("j").longOpt("json").desc("write JSON output to stdout").build());
+        options.addOption(Option.builder("F").longOpt("check-fonts").desc("check font embedding").build());
+        options.addOption(Option.builder("J").longOpt("check-javascript").desc("check for JavaScript actions").build());
+        options.addOption(Option.builder("A").longOpt("check-anonymous").desc("check metadata for anonymity").build());
         options.addOption(Option.builder("s").longOpt("strip").desc("strip JS/metadata").build());
         options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
                           .hasArg(true).argName("PAGENO").build());
@@ -107,14 +120,22 @@ public class App {
                 appArgs.outputFile = cl.getOptionValue('o');
             else if (cl.getArgs().length > 1)
                 appArgs.outputFile = cl.getArgs()[1];
-            if (cl.hasOption('j'))
+            if (cl.hasOption('F'))
+                appArgs.checkFonts = true;
+            if (cl.hasOption('J'))
                 appArgs.checkJS = true;
-            if (cl.hasOption('a'))
+            if (cl.hasOption('A'))
                 appArgs.checkAnonymity = true;
             if (cl.hasOption('s'))
                 appArgs.strip = true;
+            if (cl.hasOption('j'))
+                appArgs.jsonOutput = true;
             if (appArgs.strip && !appArgs.checkJS && !appArgs.checkAnonymity) {
                 System.err.println("`--strip` requires `--js` or `--anonymity`");
+                throw new NumberFormatException();
+            }
+            if (appArgs.strip && appArgs.jsonOutput && appArgs.outputFile.equals("-")) {
+                System.err.println("`--json` plus `--strip` requires output file");
                 throw new NumberFormatException();
             }
             if (!cl.hasOption("help"))
@@ -131,14 +152,16 @@ public class App {
 
     public void runMain(String[] args) throws IOException, DocumentException, NumberFormatException {
         AppArgs aa = parseArgs(args);
+        jsonOutput = aa.jsonOutput;
 
         PdfReader reader;
-        if (aa.inputFile == "-")
+        if (aa.inputFile.equals("-"))
             reader = new PdfReader(System.in);
         else
             reader = new PdfReader(aa.inputFile);
 
-        checkFonts(reader);
+        if (aa.checkFonts)
+            checkFonts(reader);
         if (aa.checkJS)
             checkJavascripts(reader, aa.strip);
         if (aa.checkAnonymity)
@@ -147,7 +170,7 @@ public class App {
         PdfStamper stamper = null;
         if (aa.paginate || aa.outputFileGiven) {
             java.io.OutputStream output;
-            if (aa.outputFile == "-")
+            if (aa.outputFile.equals("-"))
                 output = System.out;
             else
                 output = new FileOutputStream(aa.outputFile);
@@ -160,6 +183,34 @@ public class App {
         if (stamper != null)
             stamper.close();
         reader.close();
+
+        if (jsonOutput) {
+            JsonObjectBuilder result = Json.createObjectBuilder()
+                .add("ok", true).add("npages", reader.getNumberOfPages());
+            JsonArrayBuilder errfResult = Json.createArrayBuilder();
+            if ((errorTypes & ERR_FONT_NOTEMBEDDED) != 0)
+                errfResult.add("fontembed");
+            if ((errorTypes & ERR_FONT_TYPE3) != 0)
+                errfResult.add("fonttype");
+            if ((errorTypes & ERR_JAVASCRIPT) != 0)
+                errfResult.add("javascript");
+            if ((errorTypes & ERR_ANONYMITY) != 0)
+                errfResult.add("authormeta");
+            if (errorTypes != 0)
+                result.add("errf", errfResult.build());
+            if (!errors.isEmpty()) {
+                JsonArrayBuilder errorsResult = Json.createArrayBuilder();
+                for (String e : errors)
+                    errorsResult.add(e);
+                result.add("errors", errorsResult.build());
+            }
+            StringWriter stWriter = new StringWriter();
+            try (JsonWriter jsonWriter = Json.createWriter(stWriter)) {
+                jsonWriter.write(result.build());
+            }
+            System.out.println(stWriter.toString());
+        }
+
         System.exit(errors.isEmpty() ? 0 : 1);
     }
 
@@ -209,10 +260,10 @@ public class App {
     }
     private boolean seenRef(PdfObject obj) {
         String refname = refName(obj);
-        if (viewed_font_refs.contains(refname))
+        if (viewedFontRefs.contains(refname))
             return true;
         else {
-            viewed_font_refs.add(refname);
+            viewedFontRefs.add(refname);
             return false;
         }
     }
@@ -296,10 +347,22 @@ public class App {
         if (claimed_type == null)
             claimed_type = declared_type;
 
-        if (claimed_type.equals(PdfName.TYPE3))
-            addError(ERR_FONT_TYPE3, "document contains Type3 font “" + friendlyFontName(namestr) + "” (first referenced on page " + p + ")");
-        else if (embedded_type == null)
-            addError(ERR_FONT_NOTEMBEDDED, claimed_type.toString().substring(1) + " font “" + friendlyFontName(namestr) + "” not embedded (first referenced on page " + p + ")");
+        if (claimed_type.equals(PdfName.TYPE3)) {
+            String fnamestr = friendlyFontName(namestr);
+            if (!type3FontNames.contains(fnamestr)) {
+                type3FontNames.add(fnamestr);
+                if (fnamestr.equals("[no name]"))
+                    addError(ERR_FONT_TYPE3, "document contains unnamed Type3 fonts (first referenced on page " + p + ")");
+                else
+                    addError(ERR_FONT_TYPE3, "document contains Type3 font “" + friendlyFontName(namestr) + "” (first referenced on page " + p + ")");
+            }
+        } else if (embedded_type == null) {
+            String fnamestr = friendlyFontName(namestr);
+            if (!nonEmbeddedFontNames.contains(fnamestr)) {
+                nonEmbeddedFontNames.add(fnamestr);
+                addError(ERR_FONT_NOTEMBEDDED, claimed_type.toString().substring(1) + " font “" + fnamestr + "” not embedded (first referenced on page " + p + ")");
+            }
+        }
     }
 
     public void checkJavascripts(PdfReader reader, boolean strip) throws IOException, DocumentException {
@@ -373,13 +436,15 @@ public class App {
     public void checkAnonymity(PdfReader reader, boolean strip) {
         PdfDictionary trailer = reader.getTrailer();
         PdfDictionary info = trailer != null ? trailer.getAsDict(PdfName.INFO) : null;
-        if (info != null && info.get(PdfName.AUTHOR) != null) {
-            PdfString author = info.getAsString(PdfName.AUTHOR);
+        PdfString author = null;
+        if (info != null)
+            author = info.getAsString(PdfName.AUTHOR);
+        if (author != null && !author.toString().equals("")) {
             if (strip) {
                 documentModified = true;
                 info.remove(PdfName.AUTHOR);
             }
-            addError(ERR_ANONYMITY, (strip ? "stripping " : "document contains ") + "author information" + (author == null ? "" : "“" + author.toString() + "”"));
+            addError(ERR_ANONYMITY, (strip ? "stripping " : "document contains ") + "author metadata “" + author.toString() + "” (submissions should be anonymous)");
         }
         // XXX should also strip all XMP metadata but fuck it
     }
