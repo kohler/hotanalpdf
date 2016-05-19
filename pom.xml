@@ -52,6 +52,9 @@
           <descriptorRefs>
             <descriptorRef>jar-with-dependencies</descriptorRef>
           </descriptorRefs>
+          <finalName>hotanalpdf</finalName>
+          <appendAssemblyId>false</appendAssemblyId>
+          <attach>false</attach>
           <archive>
             <manifest>
               <mainClass>org.lcdf.hotanalpdf.App</mainClass>

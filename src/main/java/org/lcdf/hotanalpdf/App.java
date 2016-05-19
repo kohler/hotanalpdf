@@ -43,8 +43,8 @@ import org.apache.commons.cli.HelpFormatter;
 
  
 public class App {
-    private Vector<String> errors = new Vector<String>();
-    private TreeSet<String> errorsGiven = new TreeSet<String>();
+    private JsonArrayBuilder fmtErrors = Json.createArrayBuilder();
+    private TreeSet<String> fmtErrorsGiven = new TreeSet<String>();
     private int errorTypes = 0;
     private TreeSet<String> viewedFontRefs = new TreeSet<String>();
     private TreeSet<String> type3FontNames = new TreeSet<String>();
@@ -56,6 +56,7 @@ public class App {
     public final int ERR_FONT_NOTEMBEDDED = 2;
     public final int ERR_JAVASCRIPT = 4;
     public final int ERR_ANONYMITY = 8;
+    public final String errfNameMap[] = {null, "fonttype", "fontembed", null, "javascript", null, null, null, "authormeta"};
 
     public class AppArgs {
         public boolean paginate = false;
@@ -77,10 +78,11 @@ public class App {
 
     private void addError(int errorType, String error) {
         errorTypes |= errorType;
-        if (!errorsGiven.contains(error)) {
-            errors.add(error);
-            errorsGiven.add(error);
-            if (!jsonOutput)
+        if (!fmtErrorsGiven.contains(error)) {
+            fmtErrorsGiven.add(error);
+            if (jsonOutput)
+                fmtErrors.add(Json.createArrayBuilder().add(errfNameMap[errorType]).add(error).build());
+            else
                 System.err.println(error);
         }
     }
@@ -186,23 +188,15 @@ public class App {
 
         if (jsonOutput) {
             JsonObjectBuilder result = Json.createObjectBuilder()
-                .add("ok", true).add("npages", reader.getNumberOfPages());
+                .add("ok", true).add("at", (long) (System.currentTimeMillis() / 1000L))
+                .add("npages", reader.getNumberOfPages());
             JsonArrayBuilder errfResult = Json.createArrayBuilder();
-            if ((errorTypes & ERR_FONT_NOTEMBEDDED) != 0)
-                errfResult.add("fontembed");
-            if ((errorTypes & ERR_FONT_TYPE3) != 0)
-                errfResult.add("fonttype");
-            if ((errorTypes & ERR_JAVASCRIPT) != 0)
-                errfResult.add("javascript");
-            if ((errorTypes & ERR_ANONYMITY) != 0)
-                errfResult.add("authormeta");
-            if (errorTypes != 0)
+            for (int x = 0; x < 4; ++x)
+                if ((errorTypes & (1 << x)) != 0)
+                    errfResult.add(errfNameMap[1 << x]);
+            if (errorTypes != 0) {
                 result.add("errf", errfResult.build());
-            if (!errors.isEmpty()) {
-                JsonArrayBuilder errorsResult = Json.createArrayBuilder();
-                for (String e : errors)
-                    errorsResult.add(e);
-                result.add("errors", errorsResult.build());
+                result.add("fmt_errors", fmtErrors.build());
             }
             StringWriter stWriter = new StringWriter();
             try (JsonWriter jsonWriter = Json.createWriter(stWriter)) {
@@ -211,7 +205,7 @@ public class App {
             System.out.println(stWriter.toString());
         }
 
-        System.exit(errors.isEmpty() ? 0 : 1);
+        System.exit(errorTypes == 0 ? 0 : 1);
     }
 
     public void paginate(AppArgs aa, PdfReader reader, PdfStamper stamper) throws IOException, DocumentException {
