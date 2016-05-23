@@ -348,15 +348,15 @@ public class App {
             if (!type3FontNames.contains(fnamestr)) {
                 type3FontNames.add(fnamestr);
                 if (fnamestr.equals("[no name]"))
-                    addError(ERR_FONT_TYPE3, "document contains unnamed Type3 fonts (first referenced on page " + p + ")");
+                    addError(ERR_FONT_TYPE3, "Bad font: unnamed Type3 fonts first referenced on page " + p + ".");
                 else
-                    addError(ERR_FONT_TYPE3, "document contains Type3 font “" + friendlyFontName(namestr) + "” (first referenced on page " + p + ")");
+                    addError(ERR_FONT_TYPE3, "Bad font: Type3 font “" + friendlyFontName(namestr) + "” first referenced on page " + p + ".");
             }
         } else if (embedded_type == null) {
             String fnamestr = friendlyFontName(namestr);
             if (!nonEmbeddedFontNames.contains(fnamestr)) {
                 nonEmbeddedFontNames.add(fnamestr);
-                addError(ERR_FONT_NOTEMBEDDED, claimed_type.toString().substring(1) + " font “" + fnamestr + "” not embedded (first referenced on page " + p + ")");
+                addError(ERR_FONT_NOTEMBEDDED, "Missing font: “" + fnamestr + "” not embedded, first referenced on page " + p + ".");
             }
         }
     }
@@ -426,7 +426,7 @@ public class App {
             documentModified = true;
             holder.remove(key);
         }
-        addError(ERR_JAVASCRIPT, (strip ? "stripping " : "document contains ") + "JavaScript actions" + where);
+        addError(ERR_JAVASCRIPT, (strip ? "Stripping " : "Document contains ") + "JavaScript actions" + where + ".");
     }
 
     public void checkAnonymity(PdfReader reader, boolean strip) {
@@ -440,7 +440,7 @@ public class App {
                 documentModified = true;
                 info.remove(PdfName.AUTHOR);
             }
-            addError(ERR_ANONYMITY, (strip ? "stripping " : "document contains ") + "author metadata “" + author.toString() + "” (submissions should be anonymous)");
+            addError(ERR_ANONYMITY, (strip ? "Stripping " : "Document contains ") + "author metadata “" + author.toString() + "”; submissions should be anonymous.");
         }
         // XXX should also strip all XMP metadata but fuck it
     }
