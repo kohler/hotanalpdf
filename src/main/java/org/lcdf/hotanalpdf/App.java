@@ -63,6 +63,7 @@ public class App {
         public boolean paginate = false;
         public int firstPage = 0;
         public int pageNumberSize = 9;
+        public boolean pageNumberRoman = false;
         public String inputFile = "-";
         public boolean outputFileGiven = false;
         public String outputFile = "-";
@@ -99,6 +100,7 @@ public class App {
         options.addOption(Option.builder("s").longOpt("strip").desc("strip JS/metadata").build());
         options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
                           .hasArg(true).argName("PAGENO").build());
+        options.addOption(Option.builder().longOpt("roman").desc("paginate in lowercase Roman numberals").build());
         options.addOption(Option.builder().longOpt("page-number-size").desc("page number size [9]")
                           .hasArg(true).argName("").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
@@ -113,6 +115,8 @@ public class App {
             }
             if (cl.hasOption("page-number-size"))
                 appArgs.pageNumberSize = Integer.parseInt(cl.getOptionValue("page-number-size"));
+            if (cl.hasOption("roman"))
+                appArgs.pageNumberRoman = true;
             if (cl.getArgs().length > (cl.hasOption('o') ? 1 : 2))
                 throw new NumberFormatException();
             if (cl.getArgs().length > 0)
@@ -210,6 +214,19 @@ public class App {
         System.exit(errorTypes == 0 ? 0 : 1);
     }
 
+    static final private String romanNumeralOut[] = {"c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
+    static final private int romanNumeralIn[] = {100, 90, 50, 40, 10, 9, 5, 4, 1};
+    static public String romanNumerals(int n) {
+        java.lang.StringBuilder sb = new java.lang.StringBuilder();
+        int pos = 0;
+        while (n > 0)
+            if (n >= romanNumeralIn[pos]) {
+                sb.append(romanNumeralOut[pos]);
+                n -= romanNumeralIn[pos];
+            } else
+                ++pos;
+        return sb.toString();
+    }
     public void paginate(AppArgs aa, PdfReader reader, PdfStamper stamper) throws IOException, DocumentException {
         java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
         byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
@@ -217,10 +234,12 @@ public class App {
         Font font = new Font(numberFont, aa.pageNumberSize);
 
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
-            Phrase pageno = new Phrase(Integer.toString(aa.firstPage + p - 1), font);
+            int pageno = aa.firstPage + p - 1;
+            String pagenoStr = aa.pageNumberRoman ? romanNumerals(pageno) : Integer.toString(pageno);
+            Phrase pagenoPhrase = new Phrase(pagenoStr, font);
             ColumnText.showTextAligned(
                 stamper.getOverContent(p), Element.ALIGN_CENTER,
-                pageno, reader.getPageSize(p).getWidth() / 2, 28, 0);
+                pagenoPhrase, reader.getPageSize(p).getWidth() / 2, 28, 0);
             documentModified = true;
         }
     }
