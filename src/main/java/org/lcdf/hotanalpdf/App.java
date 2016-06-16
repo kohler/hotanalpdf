@@ -10,6 +10,7 @@ import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfStamper;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfName;
+import com.itextpdf.text.pdf.PdfNumber;
 import com.itextpdf.text.pdf.PdfObject;
 import com.itextpdf.text.pdf.PdfIndirectReference;
 import com.itextpdf.text.pdf.PRIndirectReference;
@@ -19,13 +20,16 @@ import com.itextpdf.text.pdf.PdfArray;
 import com.itextpdf.text.pdf.PdfPage;
 import com.itextpdf.text.pdf.BaseFont;
 import com.itextpdf.text.FontFactory;
- 
+
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.io.StringWriter;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.Vector;
 import javax.json.Json;
@@ -42,8 +46,12 @@ import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.ParseException;
 import org.apache.commons.cli.HelpFormatter;
 
- 
+
 public class App {
+    private PdfReader reader = null;
+    private PdfStamper stamper = null;
+    private AppArgs appArgs = null;
+
     private JsonArrayBuilder fmtErrors = Json.createArrayBuilder();
     private TreeSet<String> fmtErrorsGiven = new TreeSet<String>();
     private int errorTypes = 0;
@@ -51,7 +59,209 @@ public class App {
     private TreeSet<String> type3FontNames = new TreeSet<String>();
     private TreeSet<String> nonEmbeddedFontNames = new TreeSet<String>();
     private boolean documentModified = false;
-    private boolean jsonOutput = false;
+
+    static public class EmbedFontInfo {
+        public String baseName;
+        public String fontName;
+        public String filePrefix;
+        public boolean symbolic;
+        private byte[] pfbData = null;
+        private byte[] pfmData = null;
+        private boolean loaded = false;
+        public PdfIndirectReference dataReference = null;
+        public PdfIndirectReference descriptorReference = null;
+
+        public EmbedFontInfo(String baseName, String fontName, String filePrefix, boolean symbolic) {
+            this.baseName = baseName;
+            this.fontName = fontName;
+            this.filePrefix = filePrefix;
+            this.symbolic = symbolic;
+        }
+        public boolean load() {
+            if (!loaded) {
+                loaded = true;
+                pfbData = getContents(filePrefix, ".pfb", "type1 fonts");
+                pfmData = getContents(filePrefix, ".pfm", "type1 fonts");
+                if (pfmData == null)
+                    pfmData = getContents(filePrefix, ".pfm", "afm");
+                if (pfmData == null)
+                    pfmData = getContents(filePrefix, ".afm", "afm");
+            }
+            return pfbData != null && pfmData != null;
+        }
+        public BaseFont getBaseFont(PdfDictionary fontDict) {
+            return getBaseFont(AnalEncoding.getPdfEncoding(fontDict));
+        }
+        public BaseFont getBaseFont(AnalEncoding encoding) {
+            try {
+                return BaseFont.createFont(fontName + ".pfm", encoding.unparseItext(), BaseFont.EMBEDDED, false, pfmData, pfbData, false, true);
+            } catch (Throwable e) {
+                return null;
+            }
+        }
+        public PdfDictionary getFontDescriptor(BaseFont font) throws DocumentException {
+            Class<?>[] classArray = {PdfIndirectReference.class};
+            try {
+                java.lang.reflect.Method method = font.getClass().getDeclaredMethod("getFontDescriptor", classArray);
+                method.setAccessible(true);
+                Object[] args = {dataReference};
+                PdfDictionary descriptor = (PdfDictionary) method.invoke(font, args);
+                String theirName = PdfName.decodeName(descriptor.getAsName(PdfName.FONTNAME).toString());
+                if (!theirName.equals(fontName)) {
+                    System.err.println(baseName + " replacement: expected " + fontName + ", got " + theirName);
+                    fontName = theirName;
+                }
+                return descriptor;
+            } catch (Throwable t) {
+                throw new NullPointerException();
+            }
+        }
+        public PdfStream getFullFontStream(BaseFont font) throws DocumentException {
+            Class<?>[] classArray = {};
+            try {
+                java.lang.reflect.Method method = font.getClass().getDeclaredMethod("getFullFontStream", classArray);
+                method.setAccessible(true);
+                Object[] args = {};
+                return (PdfStream) method.invoke(font, args);
+            } catch (Throwable t) {
+                throw new NullPointerException();
+            }
+        }
+        static private byte[] getContents(String prefix, String suffix, String kind) {
+            try {
+                String f = findFile(prefix, suffix, kind);
+                if (f != null) {
+                    java.io.InputStream fileStream = new java.io.FileInputStream(f);
+                    return IOUtils.toByteArray(fileStream);
+                }
+            } catch (IOException e) {
+            }
+            return null;
+        }
+        static private String findFile(String prefix, String suffix, String kind) {
+            if (new java.io.File(prefix + suffix).exists())
+                return prefix + suffix;
+            try {
+                String[] args = {"kpsewhich", "-format=" + kind, prefix + suffix};
+                Process p = Runtime.getRuntime().exec(args);
+                String result = IOUtils.toString(p.getInputStream(), "UTF-8").trim();
+                p.destroy();
+                if (result != "" && new java.io.File(result).exists())
+                    return result;
+            } catch (IOException e) {
+            }
+            int i = prefix.lastIndexOf('-');
+            if (i >= 0)
+                return findFile(prefix.substring(0, i), suffix, kind);
+            return null;
+        }
+    }
+
+    static public class AnalEncoding {
+        public String[] encoding = new String[256];
+
+        static private TreeMap<String, AnalEncoding> defaultEncodings = new TreeMap<String, AnalEncoding>();
+        static private TreeMap<String, Integer> unicodeMap = null;
+
+        public AnalEncoding copy() {
+            AnalEncoding c = new AnalEncoding();
+            for (int i = 0; i < 256; ++i)
+                c.encoding[i] = this.encoding[i];
+            return c;
+        }
+        public String unparseItext() {
+            makeUnicodeMap();
+            StringBuffer buffer = new StringBuffer(1024);
+            buffer.append("# full");
+            for (int i = 0; i < 256; ++i)
+                if (encoding[i] != null && !encoding[i].equals(".notdef")) {
+                    buffer.append(" ");
+                    buffer.append(i);
+                    buffer.append(" ");
+                    buffer.append(encoding[i]);
+                    buffer.append(" ");
+                    buffer.append(String.format("%04X", unicodeMap.get(encoding[i])));
+                }
+            return buffer.toString();
+        }
+
+        static private void makeUnicodeMap() {
+            if (unicodeMap == null) {
+                unicodeMap = new TreeMap<String, Integer>();
+                try {
+                    java.io.InputStream stream = App.class.getResourceAsStream("/UnicodeNames.txt");
+                    BufferedReader br = new BufferedReader(new InputStreamReader(stream, "UTF-8"));
+                    String line = null;
+                    while ((line = br.readLine()) != null) {
+                        String[] words = line.split("\\s+");
+                        if (words.length >= 2)
+                            unicodeMap.put(words[0], Integer.parseInt(words[1], 16));
+                    }
+                    stream.close();
+                } catch (Throwable e) {
+                }
+            }
+        }
+
+        static public AnalEncoding getEncoding(String name) {
+            if (!defaultEncodings.containsKey(name)) {
+                AnalEncoding encoding = new AnalEncoding();
+                try {
+                    java.io.InputStream stream = App.class.getResourceAsStream("/" + name + ".txt");
+                    BufferedReader br = new BufferedReader(new InputStreamReader(stream, "UTF-8"));
+                    String line = null;
+                    while ((line = br.readLine()) != null) {
+                        String[] words = line.split("\\s+");
+                        if (words.length >= 3)
+                            encoding.encoding[Integer.parseInt(words[0], 10)] = words[1];
+                    }
+                    stream.close();
+                } catch (Throwable e) {
+                }
+                defaultEncodings.put(name, encoding);
+            }
+            return defaultEncodings.get(name);
+        }
+        static private AnalEncoding getBasePdfEncoding(PdfDictionary font) {
+            String fontNameStr = font.getAsName(PdfName.BASEFONT).toString();
+            if (fontNameStr == "/Symbol")
+                return getEncoding("SymbolEncoding");
+            else if (fontNameStr == "/ZapfDingbats")
+                return getEncoding("ZapfDingbats");
+            else
+                return getEncoding("StandardEncoding");
+        }
+        static public AnalEncoding getPdfEncoding(PdfDictionary font) {
+            PdfObject encodingObj = font.get(PdfName.ENCODING);
+            if (encodingObj != null && encodingObj.isName())
+                return getEncoding(((PdfName) encodingObj).toString().substring(1));
+            else if (encodingObj != null && (encodingObj.isDictionary() || encodingObj.isIndirect())) {
+                PdfDictionary encodingDict = font.getAsDict(PdfName.ENCODING);
+                PdfName base = encodingDict.getAsName(PdfName.BASEENCODING);
+                AnalEncoding e;
+                if (base != null)
+                    e = getEncoding(base.toString().substring(1)).copy();
+                else
+                    e = getBasePdfEncoding(font).copy();
+                PdfArray differences = encodingDict.getAsArray(PdfName.DIFFERENCES);
+                if (differences != null) {
+                    int nextCode = -1;
+                    for (int i = 0; i < differences.size(); ++i)
+                        if (differences.getPdfObject(i).isNumber())
+                            nextCode = differences.getAsNumber(i).intValue();
+                        else if (nextCode >= 0 && nextCode < 256) {
+                            e.encoding[nextCode] = PdfName.decodeName(differences.getAsName(i).toString());
+                            ++nextCode;
+                        }
+                }
+                return e;
+            } else
+                return getBasePdfEncoding(font);
+        }
+    }
+
+    private TreeMap<String, EmbedFontInfo> embedFontMap = null;
+    private TreeMap<String, PdfIndirectReference> loadedFonts = new TreeMap<String, PdfIndirectReference>();
 
     public final int ERR_FONT_TYPE3 = 1;
     public final int ERR_FONT_NOTEMBEDDED = 2;
@@ -59,7 +269,7 @@ public class App {
     public final int ERR_ANONYMITY = 8;
     public final String errfNameMap[] = {null, "fonttype", "fontembed", null, "javascript", null, null, null, "authormeta"};
 
-    public class AppArgs {
+    static public class AppArgs {
         public boolean paginate = false;
         public int firstPage = 0;
         public int pageNumberSize = 9;
@@ -69,6 +279,7 @@ public class App {
         public String outputFile = "-";
         public boolean jsonOutput = false;
         public boolean checkFonts = false;
+        public boolean embedFonts = false;
         public boolean checkJS = false;
         public boolean checkAnonymity = false;
         public boolean strip = false;
@@ -82,7 +293,7 @@ public class App {
         errorTypes |= errorType;
         if (!fmtErrorsGiven.contains(error)) {
             fmtErrorsGiven.add(error);
-            if (jsonOutput)
+            if (appArgs.jsonOutput)
                 fmtErrors.add(Json.createArrayBuilder().add(errfNameMap[errorType]).add(error).build());
             else
                 System.err.println(error);
@@ -98,6 +309,7 @@ public class App {
         options.addOption(Option.builder("J").longOpt("check-javascript").desc("check for JavaScript actions").build());
         options.addOption(Option.builder("A").longOpt("check-anonymous").desc("check metadata for anonymity").build());
         options.addOption(Option.builder("s").longOpt("strip").desc("strip JS/metadata").build());
+        options.addOption(Option.builder().longOpt("embed-fonts").desc("embed missing fonts when possible").build());
         options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
                           .hasArg(true).argName("PAGENO").build());
         options.addOption(Option.builder().longOpt("roman").desc("paginate in lowercase Roman numberals").build());
@@ -129,6 +341,8 @@ public class App {
                 appArgs.outputFile = cl.getArgs()[1];
             if (cl.hasOption('F'))
                 appArgs.checkFonts = true;
+            if (cl.hasOption("embed-fonts"))
+                appArgs.embedFonts = true;
             if (cl.hasOption('J'))
                 appArgs.checkJS = true;
             if (cl.hasOption('A'))
@@ -158,40 +372,36 @@ public class App {
     }
 
     public void runMain(String[] args) throws IOException, DocumentException, NumberFormatException {
-        AppArgs aa = parseArgs(args);
-        jsonOutput = aa.jsonOutput;
+        appArgs = parseArgs(args);
 
-        PdfReader reader;
-        if (aa.inputFile.equals("-"))
+        if (appArgs.inputFile.equals("-"))
             reader = new PdfReader(System.in);
         else
-            reader = new PdfReader(aa.inputFile);
+            reader = new PdfReader(appArgs.inputFile);
 
-        if (aa.checkFonts)
-            checkFonts(reader);
-        if (aa.checkJS)
-            checkJavascripts(reader, aa.strip);
-        if (aa.checkAnonymity)
-            checkAnonymity(reader, aa.strip);
-
-        PdfStamper stamper = null;
-        if (aa.paginate || aa.outputFileGiven) {
+        if (appArgs.paginate || appArgs.outputFileGiven || appArgs.embedFonts) {
             java.io.OutputStream output;
-            if (aa.outputFile.equals("-"))
+            if (appArgs.outputFile.equals("-"))
                 output = System.out;
             else
-                output = new FileOutputStream(aa.outputFile);
+                output = new FileOutputStream(appArgs.outputFile);
             stamper = new PdfStamper(reader, output);
         }
 
-        if (aa.paginate)
-            paginate(aa, reader, stamper);
+        if (appArgs.checkFonts || appArgs.embedFonts)
+            checkFonts();
+        if (appArgs.checkJS)
+            checkJavascripts(appArgs.strip);
+        if (appArgs.checkAnonymity)
+            checkAnonymity(appArgs.strip);
+        if (appArgs.paginate)
+            paginate();
 
         if (stamper != null)
             stamper.close();
         reader.close();
 
-        if (jsonOutput) {
+        if (appArgs.jsonOutput) {
             JsonObjectBuilder result = Json.createObjectBuilder()
                 .add("ok", true).add("at", (long) (System.currentTimeMillis() / 1000L))
                 .add("npages", reader.getNumberOfPages());
@@ -227,15 +437,15 @@ public class App {
                 ++pos;
         return sb.toString();
     }
-    public void paginate(AppArgs aa, PdfReader reader, PdfStamper stamper) throws IOException, DocumentException {
+    public void paginate() throws IOException, DocumentException {
         java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
         byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
         BaseFont numberFont = BaseFont.createFont("HotCRPNumberTime.otf", BaseFont.WINANSI, true, false, numberFontBytes, null);
-        Font font = new Font(numberFont, aa.pageNumberSize);
+        Font font = new Font(numberFont, appArgs.pageNumberSize);
 
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
-            int pageno = aa.firstPage + p - 1;
-            String pagenoStr = aa.pageNumberRoman ? romanNumerals(pageno) : Integer.toString(pageno);
+            int pageno = appArgs.firstPage + p - 1;
+            String pagenoStr = appArgs.pageNumberRoman ? romanNumerals(pageno) : Integer.toString(pageno);
             Phrase pagenoPhrase = new Phrase(pagenoStr, font);
             ColumnText.showTextAligned(
                 stamper.getOverContent(p), Element.ALIGN_CENTER,
@@ -244,7 +454,7 @@ public class App {
         }
     }
 
-    public void checkFonts(PdfReader reader) throws IOException, DocumentException {
+    public void checkFonts() throws IOException, DocumentException {
         // parsing/traversing borrowed from `poppler/util/pdffonts`
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
             PdfDictionary page = reader.getPageN(p);
@@ -299,9 +509,6 @@ public class App {
             }
         }
     }
-    static public String friendlyFontName(String fontName) {
-        return fontName.replace("#20", " ");
-    }
     public void checkFont(int p, PdfObject fontobj) {
         String refname = "[direct]";
         if (fontobj.isIndirect()) {
@@ -321,7 +528,7 @@ public class App {
         if (name == null)
             namestr = "[no name]";
         else
-            namestr = name.toString().substring(1);
+            namestr = PdfName.decodeName(name.toString());
 
         PdfName declared_type = font.getAsName(PdfName.SUBTYPE);
         boolean isType0 = declared_type != null && declared_type.equals(PdfName.TYPE0);
@@ -363,24 +570,135 @@ public class App {
             claimed_type = declared_type;
 
         if (claimed_type.equals(PdfName.TYPE3)) {
-            String fnamestr = friendlyFontName(namestr);
-            if (!type3FontNames.contains(fnamestr)) {
-                type3FontNames.add(fnamestr);
-                if (fnamestr.equals("[no name]"))
+            if (!type3FontNames.contains(namestr)) {
+                type3FontNames.add(namestr);
+                if (namestr.equals("[no name]"))
                     addError(ERR_FONT_TYPE3, "Bad font: unnamed Type3 fonts first referenced on page " + p + ".");
                 else
-                    addError(ERR_FONT_TYPE3, "Bad font: Type3 font “" + friendlyFontName(namestr) + "” first referenced on page " + p + ".");
+                    addError(ERR_FONT_TYPE3, "Bad font: Type3 font “" + namestr + "” first referenced on page " + p + ".");
             }
         } else if (embedded_type == null) {
-            String fnamestr = friendlyFontName(namestr);
-            if (!nonEmbeddedFontNames.contains(fnamestr)) {
-                nonEmbeddedFontNames.add(fnamestr);
-                addError(ERR_FONT_NOTEMBEDDED, "Missing font: “" + fnamestr + "” not embedded, first referenced on page " + p + ".");
+            if (appArgs.embedFonts && tryEmbed(namestr, base))
+                /* OK */;
+            else if (!nonEmbeddedFontNames.contains(namestr)) {
+                nonEmbeddedFontNames.add(namestr);
+                addError(ERR_FONT_NOTEMBEDDED, "Missing font: “" + namestr + "” not embedded, first referenced on page " + p + ".");
             }
         }
     }
 
-    public void checkJavascripts(PdfReader reader, boolean strip) throws IOException, DocumentException {
+    private boolean tryEmbed(String fontName, PdfDictionary font) {
+        if (embedFontMap == null)
+            makeEmbedFontMap();
+        EmbedFontInfo embedFont = embedFontMap.get(fontName);
+        if (embedFont == null || !embedFont.load())
+            return false;
+
+        AnalEncoding encoding = AnalEncoding.getPdfEncoding(font);
+        BaseFont baseFont = embedFont.getBaseFont(encoding);
+        if (baseFont == null)
+            return false;
+
+        if (embedFont.dataReference == null) {
+            try {
+                PdfStream stream = embedFont.getFullFontStream(baseFont);
+                embedFont.dataReference = stamper.getWriter().addToBody(stream).getIndirectReference();
+            } catch (Throwable e) {
+                return false;
+            }
+        }
+
+        if (embedFont.descriptorReference == null) {
+            try {
+                PdfDictionary newDescriptor = embedFont.getFontDescriptor(baseFont);
+                embedFont.descriptorReference = stamper.getWriter().addToBody(newDescriptor).getIndirectReference();
+            } catch (Throwable e) {
+                return false;
+            }
+        }
+
+        font.put(PdfName.BASEFONT, new PdfName(embedFont.fontName));
+        font.put(PdfName.FONTDESCRIPTOR, embedFont.descriptorReference);
+        if (!font.contains(PdfName.WIDTHS)) {
+            int firstChar = -1, lastChar = -1;
+            PdfArray widths = new PdfArray();
+            int[] w = new int[1];
+            for (int ch = 0; ch < 256; ++ch)
+                if (encoding.encoding[ch] != null && !encoding.encoding[ch].equals(".notdef")) {
+                    if (firstChar < 0)
+                        firstChar = ch;
+                    else {
+                        w[0] = 0;
+                        for (; lastChar + 1 < ch; ++lastChar)
+                            widths.add(w);
+                    }
+                    lastChar = ch;
+                    w[0] = baseFont.getWidth(ch);
+                    widths.add(w);
+                }
+            try {
+                font.put(PdfName.FIRSTCHAR, new PdfNumber(firstChar));
+                font.put(PdfName.LASTCHAR, new PdfNumber(lastChar));
+                font.put(PdfName.WIDTHS, stamper.getWriter().addToBody(widths).getIndirectReference());
+            } catch (Throwable e) {
+                return false;
+            }
+        }
+
+        /*for (PdfName n : font.getKeys())
+            System.err.println(n.toString() + " " + font.get(n).toString());
+        System.err.println(AnalEncoding.getPdfEncoding(font).unparseItext());*/
+
+        documentModified = true;
+        return true;
+    }
+    private void addEmbedFont(String baseName, String fontName, String filePrefix, boolean symbolic) {
+        if (embedFontMap == null)
+            embedFontMap = new TreeMap<String, EmbedFontInfo>();
+        embedFontMap.put(baseName, new EmbedFontInfo(baseName, fontName, filePrefix, symbolic));
+    }
+    private void addEmbedFont(String baseName, String fontName, String filePrefix) {
+        addEmbedFont(baseName, fontName, filePrefix, false);
+    }
+    private void makeEmbedFontMap() {
+        addEmbedFont("Bookman-Demi", "URWBookmanL-DemiBold", "ubkd8a");
+        addEmbedFont("Bookman-DemiItalic", "URWBookmanL-DemiBoldItal", "ubkdi8a");
+        addEmbedFont("Bookman-Light", "URWBookmanL-Ligh", "ubkl8a");
+        addEmbedFont("Bookman-LightItalic", "URWBookmanL-LighItal", "ubkli8a");
+        addEmbedFont("Courier", "NimbusMonL-Regu", "ucrr8a");
+        addEmbedFont("Courier-Oblique", "NimbusMonL-ReguObli", "ucrro8a");
+        addEmbedFont("Courier-Bold", "NimbusMonL-Bold", "ucrb8a");
+        addEmbedFont("Courier-BoldOblique", "NimbusMonL-BoldObli", "ucrbo8a");
+        addEmbedFont("AvantGarde-Book", "URWGothicL-Book", "uagk8a");
+        addEmbedFont("AvantGarde-BookOblique", "URWGothicL-BookObli", "uagko8a");
+        addEmbedFont("AvantGarde-Demi", "URWGothicL-Demi", "uagd8a");
+        addEmbedFont("AvantGarde-DemiOblique", "URWGothicL-DemiObli", "uagdo8a");
+        addEmbedFont("Helvetica", "NimbusSanL-Regu", "uhvr8a-105");
+        addEmbedFont("Helvetica-Oblique", "NimbusSanL-ReguItal", "uhvro8a-105");
+        addEmbedFont("Helvetica-Bold", "NimbusSanL-Bold", "uhvb8a");
+        addEmbedFont("Helvetica-BoldOblique", "NimbusSanL-BoldItal", "uhvbo8a");
+        addEmbedFont("Helvetica-Narrow", "NimbusSanL-ReguCond", "uhvr8ac");
+        addEmbedFont("Helvetica-Narrow-Oblique", "NimbusSanL-ReguCondItal", "uhvro8ac");
+        addEmbedFont("Helvetica-Narrow-Bold", "NimbusSanL-BoldCond", "uhvb8ac");
+        addEmbedFont("Helvetica-Narrow-BoldOblique", "NimbusSanL-BoldCondItal", "uhvbo8ac");
+        addEmbedFont("Palatino-Roman", "URWPalladioL-Roma", "uplr8a");
+        addEmbedFont("Palatino-Italic", "URWPalladioL-Ital", "uplri8a");
+        addEmbedFont("Palatino-Bold", "URWPalladioL-Bold", "uplb8a");
+        addEmbedFont("Palatino-BoldItalic", "URWPalladioL-BoldItal", "uplbi8a");
+        addEmbedFont("NewCenturySchlbk-Roman", "CenturySchL-Roma", "uncr8a");
+        addEmbedFont("NewCenturySchlbk-Italic", "CenturySchL-Ital", "uncri8a");
+        addEmbedFont("NewCenturySchlbk-Bold", "CenturySchL-Bold", "uncb8a");
+        addEmbedFont("NewCenturySchlbk-BoldItalic", "CenturySchL-BoldItal", "uncbi8a");
+        addEmbedFont("Times-Roman", "NimbusRomNo9L-Regu", "utmr8a");
+        addEmbedFont("Times-Italic", "NimbusRomNo9L-ReguItal", "utmri8a");
+        addEmbedFont("Times-Bold", "NimbusRomNo9L-Medi", "utmb8a");
+        addEmbedFont("Times-BoldItalic", "NimbusRomNo9L-MediItal", "utmbi8a");
+        addEmbedFont("Symbol", "StandardSymL", "usyr", true);
+        addEmbedFont("ZapfChancery-MediumItalic", "URWChanceryL-MediItal", "uzcmi8a");
+        addEmbedFont("ZapfDingbats", "Dingbats", "uzdr", true);
+    }
+
+    public void checkJavascripts(boolean strip) throws IOException, DocumentException {
         PdfDictionary doccatalog = reader.getCatalog();
         PdfDictionary aa = doccatalog.getAsDict(PdfName.AA);
         if (aa != null)
@@ -448,7 +766,7 @@ public class App {
         addError(ERR_JAVASCRIPT, (strip ? "Stripping " : "Document contains ") + "JavaScript actions" + where + ".");
     }
 
-    public void checkAnonymity(PdfReader reader, boolean strip) {
+    public void checkAnonymity(boolean strip) {
         PdfDictionary trailer = reader.getTrailer();
         PdfDictionary info = trailer != null ? trailer.getAsDict(PdfName.INFO) : null;
         PdfString author = null;
