@@ -66,7 +66,7 @@ public class App {
         public String filePrefix;
         public boolean symbolic;
         private byte[] pfbData = null;
-        private byte[] pfmData = null;
+        private byte[] afmData = null;
         private boolean loaded = false;
         public PdfIndirectReference dataReference = null;
         public PdfIndirectReference descriptorReference = null;
@@ -81,20 +81,16 @@ public class App {
             if (!loaded) {
                 loaded = true;
                 pfbData = getContents(filePrefix, ".pfb", "type1 fonts");
-                pfmData = getContents(filePrefix, ".pfm", "type1 fonts");
-                if (pfmData == null)
-                    pfmData = getContents(filePrefix, ".pfm", "afm");
-                if (pfmData == null)
-                    pfmData = getContents(filePrefix, ".afm", "afm");
+                afmData = getContents(filePrefix, ".afm", "afm");
             }
-            return pfbData != null && pfmData != null;
+            return pfbData != null && afmData != null;
         }
         public BaseFont getBaseFont(PdfDictionary fontDict) {
             return getBaseFont(AnalEncoding.getPdfEncoding(fontDict));
         }
         public BaseFont getBaseFont(AnalEncoding encoding) {
             try {
-                return BaseFont.createFont(fontName + ".pfm", encoding.unparseItext(), BaseFont.EMBEDDED, false, pfmData, pfbData, false, true);
+                return BaseFont.createFont(fontName + ".afm", encoding.unparseItext(), BaseFont.EMBEDDED, false, afmData, pfbData, false, true);
             } catch (Throwable e) {
                 return null;
             }
@@ -185,6 +181,11 @@ public class App {
             return buffer.toString();
         }
 
+        static public int unicodeFor(String name) {
+            makeUnicodeMap();
+            Integer i = unicodeMap.get(name);
+            return i == null ? -1 : i.intValue();
+        }
         static private void makeUnicodeMap() {
             if (unicodeMap == null) {
                 unicodeMap = new TreeMap<String, Integer>();
@@ -633,7 +634,7 @@ public class App {
                             widths.add(w);
                     }
                     lastChar = ch;
-                    w[0] = baseFont.getWidth(ch);
+                    w[0] = baseFont.getWidth(AnalEncoding.unicodeFor(encoding.encoding[ch]));
                     widths.add(w);
                 }
             try {
