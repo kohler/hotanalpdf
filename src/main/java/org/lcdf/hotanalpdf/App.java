@@ -70,6 +70,8 @@ public class App {
         private boolean loaded = false;
         public PdfIndirectReference dataReference = null;
         public PdfIndirectReference descriptorReference = null;
+        static private String kpsewhich = "kpsewhich";
+        static private boolean kpsewhichChecked = false;
 
         public EmbedFontInfo(String baseName, String fontName, String filePrefix, boolean symbolic) {
             this.baseName = baseName;
@@ -80,8 +82,8 @@ public class App {
         public boolean load() {
             if (!loaded) {
                 loaded = true;
-                pfbData = getContents(filePrefix, ".pfb", "type1 fonts");
-                afmData = getContents(filePrefix, ".afm", "afm");
+                pfbData = getContents(filePrefix, ".pfb");
+                afmData = getContents(filePrefix, ".afm");
             }
             return pfbData != null && afmData != null;
         }
@@ -123,9 +125,9 @@ public class App {
                 throw new NullPointerException();
             }
         }
-        static private byte[] getContents(String prefix, String suffix, String kind) {
+        static private byte[] getContents(String prefix, String suffix) {
             try {
-                String f = findFile(prefix, suffix, kind);
+                String f = findFile(prefix, suffix);
                 if (f != null) {
                     java.io.InputStream fileStream = new java.io.FileInputStream(f);
                     return IOUtils.toByteArray(fileStream);
@@ -134,21 +136,34 @@ public class App {
             }
             return null;
         }
-        static private String findFile(String prefix, String suffix, String kind) {
+        static private String findFile(String prefix, String suffix) {
             if (new java.io.File(prefix + suffix).exists())
                 return prefix + suffix;
             try {
-                String[] args = {"kpsewhich", "-format=" + kind, prefix + suffix};
+                String[] args = {kpsewhich, prefix + suffix};
                 Process p = Runtime.getRuntime().exec(args);
                 String result = IOUtils.toString(p.getInputStream(), "UTF-8").trim();
+                String error = IOUtils.toString(p.getErrorStream(), "UTF-8").trim();
                 p.destroy();
                 if (result != "" && new java.io.File(result).exists())
                     return result;
+                if (error != "")
+                    System.err.println(error);
             } catch (IOException e) {
+                if (!kpsewhichChecked) {
+                    kpsewhichChecked = true;
+                    if (new java.io.File("/usr/local/bin/kpsewhich").exists())
+                        kpsewhich = "/usr/local/bin/kpsewhich";
+                    else if (new java.io.File("/opt/local/bin/kpsewhich").exists())
+                        kpsewhich = "/opt/local/bin/kpsewhich";
+                    if (!kpsewhich.equals("kpsewhich"))
+                        return findFile(prefix, suffix);
+                }
+                System.err.println(e.toString());
             }
             int i = prefix.lastIndexOf('-');
             if (i >= 0)
-                return findFile(prefix.substring(0, i), suffix, kind);
+                return findFile(prefix.substring(0, i), suffix);
             return null;
         }
     }
