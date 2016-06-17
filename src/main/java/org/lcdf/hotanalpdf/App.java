@@ -145,6 +145,8 @@ public class App {
                 String result = IOUtils.toString(p.getInputStream(), "UTF-8").trim();
                 String error = IOUtils.toString(p.getErrorStream(), "UTF-8").trim();
                 p.destroy();
+                if (error != "" && error.indexOf("remove_dots") >= 0 && !kpsewhichChecked)
+                    throw new IOException();
                 if (result != "" && new java.io.File(result).exists())
                     return result;
                 if (error != "")
@@ -152,7 +154,9 @@ public class App {
             } catch (IOException e) {
                 if (!kpsewhichChecked) {
                     kpsewhichChecked = true;
-                    if (new java.io.File("/usr/local/bin/kpsewhich").exists())
+                    if (new java.io.File("/usr/bin/kpsewhich").exists())
+                        kpsewhich = "/usr/bin/kpsewhich";
+                    else if (new java.io.File("/usr/local/bin/kpsewhich").exists())
                         kpsewhich = "/usr/local/bin/kpsewhich";
                     else if (new java.io.File("/opt/local/bin/kpsewhich").exists())
                         kpsewhich = "/opt/local/bin/kpsewhich";
