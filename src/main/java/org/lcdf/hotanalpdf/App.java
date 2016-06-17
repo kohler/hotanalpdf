@@ -49,7 +49,7 @@ import org.apache.commons.cli.HelpFormatter;
 
 public class App {
     private PdfReader reader = null;
-    private PdfStamper stamper = null;
+    private PdfStamper theStamper = null;
     private AppArgs appArgs = null;
 
     private JsonArrayBuilder fmtErrors = Json.createArrayBuilder();
@@ -278,6 +278,7 @@ public class App {
         public String inputFile = "-";
         public boolean outputFileGiven = false;
         public String outputFile = "-";
+        public boolean onlyModified = false;
         public boolean jsonOutput = false;
         public boolean checkFonts = false;
         public boolean embedFonts = false;
@@ -305,6 +306,7 @@ public class App {
         Options options = new Options();
         options.addOption(Option.builder("o").longOpt("output").desc("write output PDF to FILE")
                           .hasArg(true).argName("FILE").build());
+        options.addOption(Option.builder().longOpt("only-modified").desc("only write output if modified").build());
         options.addOption(Option.builder("j").longOpt("json").desc("write JSON output to stdout").build());
         options.addOption(Option.builder("F").longOpt("check-fonts").desc("check font embedding").build());
         options.addOption(Option.builder("J").longOpt("check-javascript").desc("check for JavaScript actions").build());
@@ -340,6 +342,8 @@ public class App {
                 appArgs.outputFile = cl.getOptionValue('o');
             else if (cl.getArgs().length > 1)
                 appArgs.outputFile = cl.getArgs()[1];
+            if (cl.hasOption("only-modified"))
+                appArgs.onlyModified = true;
             if (cl.hasOption('F'))
                 appArgs.checkFonts = true;
             if (cl.hasOption("embed-fonts"))
@@ -372,6 +376,18 @@ public class App {
         return null;
     }
 
+    private PdfStamper getStamper() throws IOException, DocumentException {
+        if (theStamper == null) {
+            java.io.OutputStream output;
+            if (appArgs.outputFile.equals("-"))
+                output = System.out;
+            else
+                output = new FileOutputStream(appArgs.outputFile);
+            theStamper = new PdfStamper(reader, output);
+        }
+        return theStamper;
+    }
+
     public void runMain(String[] args) throws IOException, DocumentException, NumberFormatException {
         appArgs = parseArgs(args);
 
@@ -379,15 +395,6 @@ public class App {
             reader = new PdfReader(System.in);
         else
             reader = new PdfReader(appArgs.inputFile);
-
-        if (appArgs.paginate || appArgs.outputFileGiven || appArgs.embedFonts) {
-            java.io.OutputStream output;
-            if (appArgs.outputFile.equals("-"))
-                output = System.out;
-            else
-                output = new FileOutputStream(appArgs.outputFile);
-            stamper = new PdfStamper(reader, output);
-        }
 
         if (appArgs.checkFonts || appArgs.embedFonts)
             checkFonts();
@@ -398,14 +405,19 @@ public class App {
         if (appArgs.paginate)
             paginate();
 
-        if (stamper != null)
-            stamper.close();
+        boolean maybeModified = appArgs.paginate || appArgs.strip || appArgs.embedFonts || appArgs.outputFileGiven;
+        if (maybeModified && !appArgs.onlyModified)
+            getStamper();
+        if (theStamper != null)
+            theStamper.close();
         reader.close();
 
         if (appArgs.jsonOutput) {
             JsonObjectBuilder result = Json.createObjectBuilder()
                 .add("ok", true).add("at", (long) (System.currentTimeMillis() / 1000L))
                 .add("npages", reader.getNumberOfPages());
+            if (maybeModified)
+                result.add("modified", documentModified);
             JsonArrayBuilder errfResult = Json.createArrayBuilder();
             for (int x = 0; x < 4; ++x)
                 if ((errorTypes & (1 << x)) != 0)
@@ -449,7 +461,7 @@ public class App {
             String pagenoStr = appArgs.pageNumberRoman ? romanNumerals(pageno) : Integer.toString(pageno);
             Phrase pagenoPhrase = new Phrase(pagenoStr, font);
             ColumnText.showTextAligned(
-                stamper.getOverContent(p), Element.ALIGN_CENTER,
+                getStamper().getOverContent(p), Element.ALIGN_CENTER,
                 pagenoPhrase, reader.getPageSize(p).getWidth() / 2, 28, 0);
             documentModified = true;
         }
@@ -603,7 +615,7 @@ public class App {
         if (embedFont.dataReference == null) {
             try {
                 PdfStream stream = embedFont.getFullFontStream(baseFont);
-                embedFont.dataReference = stamper.getWriter().addToBody(stream).getIndirectReference();
+                embedFont.dataReference = getStamper().getWriter().addToBody(stream).getIndirectReference();
             } catch (Throwable e) {
                 return false;
             }
@@ -612,7 +624,7 @@ public class App {
         if (embedFont.descriptorReference == null) {
             try {
                 PdfDictionary newDescriptor = embedFont.getFontDescriptor(baseFont);
-                embedFont.descriptorReference = stamper.getWriter().addToBody(newDescriptor).getIndirectReference();
+                embedFont.descriptorReference = getStamper().getWriter().addToBody(newDescriptor).getIndirectReference();
             } catch (Throwable e) {
                 return false;
             }
@@ -640,7 +652,7 @@ public class App {
             try {
                 font.put(PdfName.FIRSTCHAR, new PdfNumber(firstChar));
                 font.put(PdfName.LASTCHAR, new PdfNumber(lastChar));
-                font.put(PdfName.WIDTHS, stamper.getWriter().addToBody(widths).getIndirectReference());
+                font.put(PdfName.WIDTHS, getStamper().getWriter().addToBody(widths).getIndirectReference());
             } catch (Throwable e) {
                 return false;
             }
