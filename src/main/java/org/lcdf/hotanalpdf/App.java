@@ -1,5 +1,6 @@
 package org.lcdf.hotanalpdf;
  
+import com.itextpdf.text.Document;
 import com.itextpdf.text.DocumentException;
 import com.itextpdf.text.Element;
 import com.itextpdf.text.Font;
@@ -18,6 +19,7 @@ import com.itextpdf.text.pdf.PdfStream;
 import com.itextpdf.text.pdf.PdfString;
 import com.itextpdf.text.pdf.PdfArray;
 import com.itextpdf.text.pdf.PdfPage;
+import com.itextpdf.text.pdf.PdfSmartCopy;
 import com.itextpdf.text.pdf.BaseFont;
 import com.itextpdf.text.FontFactory;
 
@@ -25,6 +27,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
@@ -292,9 +295,11 @@ public class App {
     static public class AppArgs {
         public boolean paginate = false;
         public int firstPage = 0;
+        public int skipPagination = -1;
         public int pageNumberSize = 9;
         public boolean pageNumberRoman = false;
-        public String inputFile = "-";
+        public Vector<String> inputFiles = new Vector<String>();
+        public int paginateFilePosition = -1;
         public boolean outputFileGiven = false;
         public String outputFile = "-";
         public boolean onlyModified = false;
@@ -337,12 +342,34 @@ public class App {
         options.addOption(Option.builder().longOpt("roman").desc("paginate in lowercase Roman numberals").build());
         options.addOption(Option.builder().longOpt("page-number-size").desc("page number size [9]")
                           .hasArg(true).argName("").build());
+        options.addOption(Option.builder().longOpt("skip-pagination").desc("don't paginate first N pages")
+                          .hasArg(true).argName("N").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
         int status = 0;
 
         try {
             CommandLine cl = new DefaultParser().parse(options, args);
             AppArgs appArgs = new AppArgs();
+
+            for (int i = 0; i < cl.getArgs().length; ++i) {
+                if (cl.getArgs()[i].equals("@"))
+                    appArgs.paginateFilePosition = appArgs.inputFiles.size();
+                else
+                    appArgs.inputFiles.addElement(cl.getArgs()[i]);
+            }
+            if (appArgs.paginateFilePosition < 0)
+                appArgs.paginateFilePosition = 0;
+            if (appArgs.inputFiles.size() == 0)
+                appArgs.inputFiles.addElement("-");
+            if (cl.hasOption('o')) {
+                appArgs.outputFileGiven = true;
+                appArgs.outputFile = cl.getOptionValue('o');
+            }
+            if (cl.hasOption("only-modified"))
+                appArgs.onlyModified = true;
+            if (cl.hasOption('j'))
+                appArgs.jsonOutput = true;
+
             if (cl.hasOption('p')) {
                 appArgs.paginate = true;
                 appArgs.firstPage = Integer.parseInt(cl.getOptionValue('p'));
@@ -351,18 +378,9 @@ public class App {
                 appArgs.pageNumberSize = Integer.parseInt(cl.getOptionValue("page-number-size"));
             if (cl.hasOption("roman"))
                 appArgs.pageNumberRoman = true;
-            if (cl.getArgs().length > (cl.hasOption('o') ? 1 : 2))
-                throw new NumberFormatException();
-            if (cl.getArgs().length > 0)
-                appArgs.inputFile = cl.getArgs()[0];
-            if (cl.hasOption('o') || cl.getArgs().length > 1)
-                appArgs.outputFileGiven = true;
-            if (cl.hasOption('o'))
-                appArgs.outputFile = cl.getOptionValue('o');
-            else if (cl.getArgs().length > 1)
-                appArgs.outputFile = cl.getArgs()[1];
-            if (cl.hasOption("only-modified"))
-                appArgs.onlyModified = true;
+            if (cl.hasOption("skip-pagination"))
+                appArgs.skipPagination = Integer.parseInt(cl.getOptionValue("skip-pagination"));
+
             if (cl.hasOption('F'))
                 appArgs.checkFonts = true;
             if (cl.hasOption("embed-fonts"))
@@ -373,8 +391,7 @@ public class App {
                 appArgs.checkAnonymity = true;
             if (cl.hasOption('s'))
                 appArgs.strip = true;
-            if (cl.hasOption('j'))
-                appArgs.jsonOutput = true;
+
             if (appArgs.strip && !appArgs.checkJS && !appArgs.checkAnonymity) {
                 System.err.println("`--strip` requires `--js` or `--anonymity`");
                 throw new NumberFormatException();
@@ -410,11 +427,45 @@ public class App {
     public void runMain(String[] args) throws IOException, DocumentException, NumberFormatException {
         appArgs = parseArgs(args);
 
-        if (appArgs.inputFile.equals("-"))
-            reader = new PdfReader(System.in);
-        else
-            reader = new PdfReader(appArgs.inputFile);
+        // read and merge files
+        ByteArrayOutputStream mergedOutputStream = null;
+        Document mergedDocument = null;
+        PdfSmartCopy mergedCopy = null;
+        if (appArgs.inputFiles.size() > 1) {
+            mergedOutputStream = new ByteArrayOutputStream();
+            mergedDocument = new Document();
+            mergedCopy = new PdfSmartCopy(mergedDocument, mergedOutputStream);
+            mergedDocument.open();
+        }
 
+        int pageCount = 0;
+        for (int filePos = 0; filePos < appArgs.inputFiles.size(); ++filePos) {
+            PdfReader r;
+            if (appArgs.inputFiles.get(filePos).equals("-"))
+                r = new PdfReader(System.in);
+            else
+                r = new PdfReader(appArgs.inputFiles.get(filePos));
+
+            pageCount += r.getNumberOfPages();
+            if (filePos + 1 == appArgs.paginateFilePosition && appArgs.skipPagination < 0)
+                appArgs.skipPagination = pageCount;
+
+            if (mergedCopy != null) {
+                for (int p = 1; p <= r.getNumberOfPages(); ++p)
+                    mergedCopy.addPage(mergedCopy.getImportedPage(r, p));
+                r.close();
+            } else
+                reader = r;
+        }
+
+        if (mergedCopy != null) {
+            mergedDocument.close();
+            reader = new PdfReader(mergedOutputStream.toByteArray());
+            getStamper();
+            documentModified = true;
+        }
+
+        // actions
         if (appArgs.checkFonts || appArgs.embedFonts)
             checkFonts();
         if (appArgs.checkJS)
@@ -424,7 +475,9 @@ public class App {
         if (appArgs.paginate)
             paginate();
 
-        boolean maybeModified = appArgs.paginate || appArgs.strip || appArgs.embedFonts || appArgs.outputFileGiven;
+        // output
+        boolean maybeModified = appArgs.paginate || appArgs.strip || appArgs.embedFonts
+            || mergedCopy != null || appArgs.outputFileGiven;
         if (maybeModified && !appArgs.onlyModified)
             getStamper();
         if (theStamper != null)
@@ -474,9 +527,10 @@ public class App {
         byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
         BaseFont numberFont = BaseFont.createFont("HotCRPNumberTime.otf", BaseFont.WINANSI, true, false, numberFontBytes, null);
         Font font = new Font(numberFont, appArgs.pageNumberSize);
+        int firstLocalPage = 1 + Math.max(appArgs.skipPagination, 0);
 
-        for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
-            int pageno = appArgs.firstPage + p - 1;
+        for (int p = firstLocalPage; p <= reader.getNumberOfPages(); ++p) {
+            int pageno = appArgs.firstPage + p - firstLocalPage;
             String pagenoStr = appArgs.pageNumberRoman ? romanNumerals(pageno) : Integer.toString(pageno);
             Phrase pagenoPhrase = new Phrase(pagenoStr, font);
             ColumnText.showTextAligned(
