@@ -247,7 +247,7 @@ public class App {
             if (fontNameStr == "/Symbol")
                 return getEncoding("SymbolEncoding");
             else if (fontNameStr == "/ZapfDingbats")
-                return getEncoding("ZapfDingbats");
+                return getEncoding("ZapfDingbatsEncoding");
             else
                 return getEncoding("StandardEncoding");
         }
