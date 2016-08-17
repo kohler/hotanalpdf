@@ -9,6 +9,7 @@ import com.itextpdf.text.Phrase;
 import com.itextpdf.text.pdf.ColumnText;
 import com.itextpdf.text.pdf.PdfReader;
 import com.itextpdf.text.pdf.PdfStamper;
+import com.itextpdf.text.pdf.PdfContentByte;
 import com.itextpdf.text.pdf.PdfDictionary;
 import com.itextpdf.text.pdf.PdfName;
 import com.itextpdf.text.pdf.PdfNumber;
@@ -90,6 +91,9 @@ public class App {
             }
             return pfbData != null && afmData != null;
         }
+        public BaseFont getBaseFont() throws IOException, DocumentException {
+            return BaseFont.createFont(fontName + ".afm", BaseFont.WINANSI, BaseFont.EMBEDDED, false, afmData, pfbData, false, true);
+        }
         public BaseFont getBaseFont(PdfDictionary fontDict) {
             return getBaseFont(AnalEncoding.getPdfEncoding(fontDict));
         }
@@ -142,18 +146,17 @@ public class App {
         static private String findFile(String prefix, String suffix) {
             if (new java.io.File(prefix + suffix).exists())
                 return prefix + suffix;
+            String error = "";
             try {
                 String[] args = {kpsewhich, prefix + suffix};
                 Process p = Runtime.getRuntime().exec(args);
                 String result = IOUtils.toString(p.getInputStream(), "UTF-8").trim();
-                String error = IOUtils.toString(p.getErrorStream(), "UTF-8").trim();
+                error = IOUtils.toString(p.getErrorStream(), "UTF-8").trim();
                 p.destroy();
                 if (error != "" && error.indexOf("remove_dots") >= 0 && !kpsewhichChecked)
                     throw new IOException();
                 if (result != "" && new java.io.File(result).exists())
                     return result;
-                if (error != "")
-                    System.err.println(error);
             } catch (IOException e) {
                 if (!kpsewhichChecked) {
                     kpsewhichChecked = true;
@@ -171,6 +174,8 @@ public class App {
             int i = prefix.lastIndexOf('-');
             if (i >= 0)
                 return findFile(prefix.substring(0, i), suffix);
+            if (error != "")
+                System.err.println(error);
             return null;
         }
     }
@@ -296,8 +301,19 @@ public class App {
         public boolean paginate = false;
         public int firstPage = 0;
         public int skipPagination = -1;
-        public int pageNumberSize = 9;
-        public boolean pageNumberRoman = false;
+        public int footerSize = 9;
+        public String lfoot = "";
+        public String cfoot = "";
+        public String rfoot = "";
+        public String lefoot = null;
+        public String refoot = null;
+        public String lofoot = null;
+        public String rofoot = null;
+        public boolean twoSided = false;
+        public BaseFont footerFont = null;
+        public float lmargin = 54;
+        public float rmargin = 54;
+        public float bmargin = 28;
         public Vector<String> inputFiles = new Vector<String>();
         public int paginateFilePosition = -1;
         public boolean outputFileGiven = false;
@@ -340,7 +356,17 @@ public class App {
         options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
                           .hasArg(true).argName("PAGENO").build());
         options.addOption(Option.builder().longOpt("roman").desc("paginate in lowercase Roman numberals").build());
-        options.addOption(Option.builder().longOpt("page-number-size").desc("page number size [9]")
+        options.addOption(Option.builder().longOpt("lfoot").desc("left-hand footer").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("cfoot").desc("center footer").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("rfoot").desc("right-hand footer").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("lefoot").desc("left-hand footer, even-numbered pages").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("lofoot").desc("left-hand footer, odd-numbered pages").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("refoot").desc("right-hand footer, even-numbered pages").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("rofoot").desc("right-hand footer, odd-numbered pages").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("two-sided").desc("swap `--lfoot` and `--rfoot` on even pages").build());
+        options.addOption(Option.builder().longOpt("footer-font").desc("footer font file [Times Roman]")
+                          .hasArg(true).argName("").build());
+        options.addOption(Option.builder().longOpt("footer-size").desc("footer size [9]")
                           .hasArg(true).argName("").build());
         options.addOption(Option.builder().longOpt("skip-pagination").desc("don't paginate first N pages")
                           .hasArg(true).argName("N").build());
@@ -370,14 +396,36 @@ public class App {
             if (cl.hasOption('j'))
                 appArgs.jsonOutput = true;
 
-            if (cl.hasOption('p')) {
+            if (cl.hasOption("lfoot"))
+                appArgs.lfoot = cl.getOptionValue("lfoot");
+            if (cl.hasOption("cfoot"))
+                appArgs.cfoot = cl.getOptionValue("cfoot");
+            if (cl.hasOption("rfoot"))
+                appArgs.rfoot = cl.getOptionValue("rfoot");
+            if (cl.hasOption("lefoot"))
+                appArgs.lefoot = cl.getOptionValue("lefoot");
+            if (cl.hasOption("lofoot"))
+                appArgs.lofoot = cl.getOptionValue("lofoot");
+            if (cl.hasOption("refoot"))
+                appArgs.refoot = cl.getOptionValue("refoot");
+            if (cl.hasOption("rofoot"))
+                appArgs.rofoot = cl.getOptionValue("rofoot");
+            if (appArgs.lfoot != "" || appArgs.cfoot != "" || appArgs.rfoot != ""
+                || (appArgs.lefoot != null && appArgs.lefoot != "")
+                || (appArgs.lofoot != null && appArgs.lofoot != "")
+                || (appArgs.refoot != null && appArgs.refoot != "")
+                || (appArgs.rofoot != null && appArgs.rofoot != ""))
                 appArgs.paginate = true;
-                appArgs.firstPage = Integer.parseInt(cl.getOptionValue('p'));
+            else if (cl.hasOption('p')) {
+                appArgs.cfoot = cl.hasOption("roman") ? "%r" : "%d";
+                appArgs.paginate = true;
             }
-            if (cl.hasOption("page-number-size"))
-                appArgs.pageNumberSize = Integer.parseInt(cl.getOptionValue("page-number-size"));
-            if (cl.hasOption("roman"))
-                appArgs.pageNumberRoman = true;
+            if (cl.hasOption('p'))
+                appArgs.firstPage = Integer.parseInt(cl.getOptionValue('p'));
+            if (cl.hasOption("footer-font"))
+                setFooterFont(appArgs, cl.getOptionValue("footer-font"));
+            if (cl.hasOption("footer-size"))
+                appArgs.footerSize = Integer.parseInt(cl.getOptionValue("footer-size"));
             if (cl.hasOption("skip-pagination"))
                 appArgs.skipPagination = Integer.parseInt(cl.getOptionValue("skip-pagination"));
 
@@ -407,9 +455,51 @@ public class App {
         }
 
         HelpFormatter formatter = new HelpFormatter();
-        formatter.printHelp("hotanalpdf", "Check and/or paginate PDFs for HotCRP.", options, "\nPlease report issues at https://github.com/kohler/hotanalpdf", true);
+        java.io.PrintWriter pw = new java.io.PrintWriter(status == 1 ? System.err : System.out);
+        formatter.printHelp(pw, 80, "hotanalpdf", "Check and/or paginate PDFs for HotCRP.", options, 0, 0, "\nPlease report issues at https://github.com/kohler/hotanalpdf", true);
+        pw.flush();
         System.exit(status);
         return null;
+    }
+    private void setFooterFont(AppArgs appArgs, String fileName) throws IOException, DocumentException {
+        if (fileName.indexOf('.') < 0) {
+            EmbedFontInfo embedFont = lookupEmbedFont(fileName);
+            if (embedFont != null) {
+                try {
+                    appArgs.footerFont = embedFont.getBaseFont();
+                    return;
+                } catch (Throwable e) {
+                    System.err.println(fileName + ": cannot load, " + e.toString());
+                    throw e;
+                }
+            }
+        }
+        try {
+            byte[] afmData = null;
+            byte[] pfbData = null;
+            int comma = fileName.indexOf(',');
+            if (comma >= 0 && fileName.toLowerCase().endsWith(".pfb")) {
+                fileName = fileName.substring(comma + 1) + "," + fileName.substring(0, comma);
+                comma = fileName.indexOf(',');
+            }
+            if (comma >= 0) {
+                java.io.InputStream fs = new java.io.FileInputStream(fileName.substring(0, comma));
+                pfbData = IOUtils.toByteArray(fs);
+                fileName = fileName.substring(comma + 1);
+            }
+            java.io.InputStream fs = new java.io.FileInputStream(fileName);
+            afmData = IOUtils.toByteArray(fs);
+            String encoding = BaseFont.WINANSI;
+            if (fileName.toLowerCase().endsWith(".ttf") || fileName.toLowerCase().endsWith(".otf"))
+                encoding = BaseFont.IDENTITY_H;
+            appArgs.footerFont = BaseFont.createFont(fileName, encoding, BaseFont.EMBEDDED, false, afmData, pfbData);
+        } catch (IOException e) {
+            System.err.println(e.getMessage());
+            throw e;
+        } catch (DocumentException e) {
+            System.err.println(fileName + ": Not a font");
+            throw e;
+        }
     }
 
     private PdfStamper getStamper() throws IOException, DocumentException {
@@ -511,8 +601,7 @@ public class App {
 
     static final private String romanNumeralOut[] = {"c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
     static final private int romanNumeralIn[] = {100, 90, 50, 40, 10, 9, 5, 4, 1};
-    static public String romanNumerals(int n) {
-        java.lang.StringBuilder sb = new java.lang.StringBuilder();
+    static public void romanNumerals(StringBuilder sb, int n) {
         int pos = 0;
         while (n > 0)
             if (n >= romanNumeralIn[pos]) {
@@ -520,22 +609,92 @@ public class App {
                 n -= romanNumeralIn[pos];
             } else
                 ++pos;
+    }
+    static public String expandFooter(String format, int pageno) {
+        StringBuilder sb = new StringBuilder();
+        int pos = 0;
+        while (pos < format.length()) {
+            int pct = format.indexOf('%', pos);
+            if (pct < 0)
+                pct = format.length();
+            sb.append(format, pos, pct);
+            if (pct + 1 < format.length() && format.charAt(pct + 1) == 'd') {
+                sb.append(pageno);
+                pct += 2;
+            } else if (pct + 1 < format.length() && format.charAt(pct + 1) == 'r') {
+                romanNumerals(sb, pageno);
+                pct += 2;
+            } else if (pct + 1 < format.length() && format.charAt(pct + 1) == '%') {
+                sb.append('%');
+                pct += 2;
+            } else if (pct < format.length()) {
+                sb.append('%');
+                pct += 1;
+            }
+            pos = pct;
+        }
         return sb.toString();
     }
+    static public boolean complexFooterString(String format) {
+        if (format == null)
+            return false;
+        int pos = 0;
+        while (pos < format.length()) {
+            char ch = format.charAt(pos);
+            if ((ch >= '0' && ch <= '9') || ch == ' ' || ch == ',' || ch == '.'
+                || ch == '-' || ch == '/' || ch == ':' || ch == 'c' || ch == 'i'
+                || ch == 'l' || ch == 'v' || ch == 'x')
+                ++pos;
+            else if (ch == '%' && pos + 1 < format.length()
+                     && (format.charAt(pos + 1) == 'r' || format.charAt(pos + 1) == 'd'))
+                pos += 2;
+            else
+                return true;
+        }
+        return false;
+    }
+    public boolean complexFooter() {
+        return complexFooterString(appArgs.lfoot) || complexFooterString(appArgs.cfoot)
+            || complexFooterString(appArgs.rfoot) || complexFooterString(appArgs.lefoot)
+            || complexFooterString(appArgs.lofoot) || complexFooterString(appArgs.refoot)
+            || complexFooterString(appArgs.rofoot);
+    }
     public void paginate() throws IOException, DocumentException {
-        java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
-        byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
-        BaseFont numberFont = BaseFont.createFont("HotCRPNumberTime.otf", BaseFont.WINANSI, true, false, numberFontBytes, null);
-        Font font = new Font(numberFont, appArgs.pageNumberSize);
+        if (appArgs.footerFont == null && !complexFooter()) {
+            java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
+            byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
+            appArgs.footerFont = BaseFont.createFont("HotCRPNumberTime.otf", BaseFont.WINANSI, true, false, numberFontBytes, null);
+        } else if (appArgs.footerFont == null)
+            appArgs.footerFont = lookupEmbedFont("Times-Roman").getBaseFont();
+        Font font = new Font(appArgs.footerFont, appArgs.footerSize);
         int firstLocalPage = 1 + Math.max(appArgs.skipPagination, 0);
 
         for (int p = firstLocalPage; p <= reader.getNumberOfPages(); ++p) {
             int pageno = appArgs.firstPage + p - firstLocalPage;
-            String pagenoStr = appArgs.pageNumberRoman ? romanNumerals(pageno) : Integer.toString(pageno);
-            Phrase pagenoPhrase = new Phrase(pagenoStr, font);
-            ColumnText.showTextAligned(
-                getStamper().getOverContent(p), Element.ALIGN_CENTER,
-                pagenoPhrase, reader.getPageSize(p).getWidth() / 2, 28, 0);
+            boolean flipped = appArgs.twoSided && pageno % 2 == 0;
+            String lfoot = pageno % 2 == 0 ? appArgs.lefoot : appArgs.lofoot;
+            if (lfoot == null)
+                lfoot = flipped ? appArgs.rfoot : appArgs.lfoot;
+            String rfoot = pageno % 2 == 0 ? appArgs.refoot : appArgs.rofoot;
+            if (rfoot == null)
+                rfoot = flipped ? appArgs.lfoot : appArgs.rfoot;
+            com.itextpdf.text.Rectangle pagebox = reader.getPageSize(p);
+            float lx = pagebox.getLeft() + (flipped ? appArgs.rmargin : appArgs.lmargin);
+            float rx = pagebox.getRight() - (flipped ? appArgs.lmargin : appArgs.rmargin);
+            float by = pagebox.getBottom() + appArgs.bmargin;
+            PdfContentByte cb = getStamper().getOverContent(p);
+            if (lfoot != "") {
+                Phrase text = new Phrase(expandFooter(lfoot, pageno), font);
+                ColumnText.showTextAligned(cb, Element.ALIGN_LEFT, text, lx, by, 0);
+            }
+            if (appArgs.cfoot != "") {
+                Phrase text = new Phrase(expandFooter(appArgs.cfoot, pageno), font);
+                ColumnText.showTextAligned(cb, Element.ALIGN_CENTER, text, (lx + rx) / 2, by, 0);
+            }
+            if (rfoot != "") {
+                Phrase text = new Phrase(expandFooter(rfoot, pageno), font);
+                ColumnText.showTextAligned(cb, Element.ALIGN_RIGHT, text, rx, by, 0);
+            }
             documentModified = true;
         }
     }
@@ -673,11 +832,18 @@ public class App {
         }
     }
 
-    private boolean tryEmbed(String fontName, PdfDictionary font) {
+    private EmbedFontInfo lookupEmbedFont(String fontName) {
         if (embedFontMap == null)
             makeEmbedFontMap();
         EmbedFontInfo embedFont = embedFontMap.get(fontName);
         if (embedFont == null || !embedFont.load())
+            return null;
+        else
+            return embedFont;
+    }
+    private boolean tryEmbed(String fontName, PdfDictionary font) {
+        EmbedFontInfo embedFont = lookupEmbedFont(fontName);
+        if (embedFont == null)
             return false;
 
         AnalEncoding encoding = AnalEncoding.getPdfEncoding(font);
