@@ -358,7 +358,7 @@ public class App {
         options.addOption(Option.builder().longOpt("embed-fonts").desc("embed missing fonts when possible").build());
         options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
                           .hasArg(true).argName("PAGENO").build());
-        options.addOption(Option.builder().longOpt("roman").desc("paginate in lowercase Roman numberals").build());
+        options.addOption(Option.builder().longOpt("roman").desc("paginate in lowercase Roman numerals").build());
         options.addOption(Option.builder().longOpt("lfoot").desc("left-hand footer").hasArg(true).build());
         options.addOption(Option.builder().longOpt("cfoot").desc("center footer").hasArg(true).build());
         options.addOption(Option.builder().longOpt("rfoot").desc("right-hand footer").hasArg(true).build());
