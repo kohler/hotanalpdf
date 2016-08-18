@@ -314,8 +314,11 @@ public class App {
         public float lmargin = 54;
         public float rmargin = 54;
         public float bmargin = 28;
+        public float footerRulePosition = 0;
+        public float footerRuleWidth = 0;
         public Vector<String> inputFiles = new Vector<String>();
         public int paginateFilePosition = -1;
+        public int blankPages = 0;
         public boolean outputFileGiven = false;
         public String outputFile = "-";
         public boolean onlyModified = false;
@@ -363,12 +366,19 @@ public class App {
         options.addOption(Option.builder().longOpt("lofoot").desc("left-hand footer, odd-numbered pages").hasArg(true).build());
         options.addOption(Option.builder().longOpt("refoot").desc("right-hand footer, even-numbered pages").hasArg(true).build());
         options.addOption(Option.builder().longOpt("rofoot").desc("right-hand footer, odd-numbered pages").hasArg(true).build());
-        options.addOption(Option.builder().longOpt("two-sided").desc("swap `--lfoot` and `--rfoot` on even pages").build());
+        options.addOption(Option.builder().longOpt("lmargin").desc("left margin [54]").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("rmargin").desc("right margin [54]").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("bmargin").desc("bottom margin [28]").hasArg(true).build());
+        options.addOption(Option.builder().longOpt("two-sided").desc("swap left/right foot/margin on even pages").build());
         options.addOption(Option.builder().longOpt("footer-font").desc("footer font file [Times Roman]")
                           .hasArg(true).argName("").build());
         options.addOption(Option.builder().longOpt("footer-size").desc("footer size [9]")
                           .hasArg(true).argName("").build());
+        options.addOption(Option.builder().longOpt("footer-rule").desc("footer rule POSITION[,WIDTH] in points")
+                          .hasArg(true).argName("").build());
         options.addOption(Option.builder().longOpt("skip-pagination").desc("don't paginate first N pages")
+                          .hasArg(true).argName("N").build());
+        options.addOption(Option.builder().longOpt("add-blank").desc("add N blank pages at end")
                           .hasArg(true).argName("N").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
         int status = 0;
@@ -426,8 +436,36 @@ public class App {
                 setFooterFont(appArgs, cl.getOptionValue("footer-font"));
             if (cl.hasOption("footer-size"))
                 appArgs.footerSize = Integer.parseInt(cl.getOptionValue("footer-size"));
+            if (cl.hasOption("footer-rule")) {
+                String s = cl.getOptionValue("footer-rule");
+                int comma = s.indexOf(',');
+                if (comma >= 0) {
+                    appArgs.footerRulePosition = Float.parseFloat(s.substring(0, comma));
+                    appArgs.footerRuleWidth = Float.parseFloat(s.substring(comma + 1));
+                } else {
+                    appArgs.footerRulePosition = Float.parseFloat(s);
+                    appArgs.footerRuleWidth = 1;
+                }
+                if (appArgs.footerRuleWidth > 0)
+                    appArgs.paginate = true;
+            }
             if (cl.hasOption("skip-pagination"))
                 appArgs.skipPagination = Integer.parseInt(cl.getOptionValue("skip-pagination"));
+
+            if (cl.hasOption("lmargin"))
+                appArgs.lmargin = Float.parseFloat(cl.getOptionValue("lmargin"));
+            if (cl.hasOption("rmargin"))
+                appArgs.rmargin = Float.parseFloat(cl.getOptionValue("rmargin"));
+            if (cl.hasOption("bmargin"))
+                appArgs.bmargin = Float.parseFloat(cl.getOptionValue("bmargin"));
+            if (cl.hasOption("two-sided"))
+                appArgs.twoSided = true;
+
+            if (cl.hasOption("add-blank")) {
+                appArgs.blankPages = Integer.parseInt(cl.getOptionValue("add-blank"));
+                if (appArgs.blankPages < 0)
+                    throw new NumberFormatException();
+            }
 
             if (cl.hasOption('F'))
                 appArgs.checkFonts = true;
@@ -521,7 +559,7 @@ public class App {
         ByteArrayOutputStream mergedOutputStream = null;
         Document mergedDocument = null;
         PdfSmartCopy mergedCopy = null;
-        if (appArgs.inputFiles.size() > 1) {
+        if (appArgs.inputFiles.size() > 1 || appArgs.blankPages > 0) {
             mergedOutputStream = new ByteArrayOutputStream();
             mergedDocument = new Document();
             mergedCopy = new PdfSmartCopy(mergedDocument, mergedOutputStream);
@@ -541,12 +579,17 @@ public class App {
                 appArgs.skipPagination = pageCount;
 
             if (mergedCopy != null) {
+                if (filePos == 0)
+                    mergedDocument.setPageSize(r.getPageSize(1));
                 for (int p = 1; p <= r.getNumberOfPages(); ++p)
                     mergedCopy.addPage(mergedCopy.getImportedPage(r, p));
                 r.close();
             } else
                 reader = r;
         }
+
+        for (int i = 0; i < appArgs.blankPages; ++i)
+            mergedCopy.addPage(mergedDocument.getPageSize(), 0);
 
         if (mergedCopy != null) {
             mergedDocument.close();
@@ -669,7 +712,7 @@ public class App {
         Font font = new Font(appArgs.footerFont, appArgs.footerSize);
         int firstLocalPage = 1 + Math.max(appArgs.skipPagination, 0);
 
-        for (int p = firstLocalPage; p <= reader.getNumberOfPages(); ++p) {
+        for (int p = firstLocalPage; p <= reader.getNumberOfPages() - appArgs.blankPages; ++p) {
             int pageno = appArgs.firstPage + p - firstLocalPage;
             boolean flipped = appArgs.twoSided && pageno % 2 == 0;
             String lfoot = pageno % 2 == 0 ? appArgs.lefoot : appArgs.lofoot;
@@ -694,6 +737,13 @@ public class App {
             if (rfoot != "") {
                 Phrase text = new Phrase(expandFooter(rfoot, pageno), font);
                 ColumnText.showTextAligned(cb, Element.ALIGN_RIGHT, text, rx, by, 0);
+            }
+            if (appArgs.footerRuleWidth > 0.0) {
+                cb.saveState();
+                cb.setRGBColorFill(0, 0, 0);
+                cb.rectangle(lx, pagebox.getBottom() + appArgs.footerRulePosition, rx - lx, appArgs.footerRuleWidth);
+                cb.fill();
+                cb.restoreState();
             }
             documentModified = true;
         }
