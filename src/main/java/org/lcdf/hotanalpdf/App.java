@@ -642,8 +642,8 @@ public class App {
         System.exit(errorTypes == 0 ? 0 : 1);
     }
 
-    static final private String romanNumeralOut[] = {"c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
-    static final private int romanNumeralIn[] = {100, 90, 50, 40, 10, 9, 5, 4, 1};
+    static final private String romanNumeralOut[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
+    static final private int romanNumeralIn[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
     static public void romanNumerals(StringBuilder sb, int n) {
         int pos = 0;
         while (n > 0)
