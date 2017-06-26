@@ -1,33 +1,37 @@
 package org.lcdf.hotanalpdf;
- 
-import com.itextpdf.text.Document;
-import com.itextpdf.text.DocumentException;
-import com.itextpdf.text.Element;
-import com.itextpdf.text.Font;
-import com.itextpdf.text.Font.FontFamily;
-import com.itextpdf.text.Phrase;
-import com.itextpdf.text.pdf.ColumnText;
-import com.itextpdf.text.pdf.PdfReader;
-import com.itextpdf.text.pdf.PdfStamper;
-import com.itextpdf.text.pdf.PdfContentByte;
-import com.itextpdf.text.pdf.PdfDictionary;
-import com.itextpdf.text.pdf.PdfName;
-import com.itextpdf.text.pdf.PdfNumber;
-import com.itextpdf.text.pdf.PdfObject;
-import com.itextpdf.text.pdf.PdfIndirectReference;
-import com.itextpdf.text.pdf.PRIndirectReference;
-import com.itextpdf.text.pdf.PdfStream;
-import com.itextpdf.text.pdf.PdfString;
-import com.itextpdf.text.pdf.PdfArray;
-import com.itextpdf.text.pdf.PdfPage;
-import com.itextpdf.text.pdf.PdfSmartCopy;
-import com.itextpdf.text.pdf.BaseFont;
-import com.itextpdf.text.FontFactory;
+
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
+import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.io.font.FontConstants;
+import com.itextpdf.io.font.FontProgram;
+import com.itextpdf.io.font.FontProgramFactory;
+import com.itextpdf.io.font.PdfEncodings;
+import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
+import com.itextpdf.layout.Canvas;
+import com.itextpdf.layout.element.Paragraph;
+import com.itextpdf.layout.property.TextAlignment;
+import com.itextpdf.layout.property.VerticalAlignment;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfReader;
+import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.kernel.utils.PdfMerger;
+import com.itextpdf.kernel.pdf.PdfDictionary;
+import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfNumber;
+import com.itextpdf.kernel.pdf.PdfObject;
+import com.itextpdf.kernel.pdf.PdfIndirectReference;
+import com.itextpdf.kernel.pdf.PdfStream;
+import com.itextpdf.kernel.pdf.PdfString;
+import com.itextpdf.kernel.pdf.PdfArray;
+import com.itextpdf.kernel.pdf.PdfPage;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -52,8 +56,8 @@ import org.apache.commons.cli.HelpFormatter;
 
 
 public class App {
-    private PdfReader reader = null;
-    private PdfStamper theStamper = null;
+    private PdfDocument reader = null;
+    private PdfDocument theStamper = null;
     private AppArgs appArgs = null;
 
     private JsonArrayBuilder fmtErrors = Json.createArrayBuilder();
@@ -71,8 +75,8 @@ public class App {
         public boolean symbolic;
         private byte[] pfbData = null;
         private byte[] afmData = null;
+        private FontProgram fontProgram = null;
         private boolean loaded = false;
-        public PdfIndirectReference dataReference = null;
         public PdfIndirectReference descriptorReference = null;
         static private String kpsewhich = "kpsewhich";
         static private boolean kpsewhichChecked = false;
@@ -91,43 +95,38 @@ public class App {
             }
             return pfbData != null && afmData != null;
         }
-        public BaseFont getBaseFont() throws IOException, DocumentException {
-            return BaseFont.createFont(fontName + ".afm", BaseFont.WINANSI, BaseFont.EMBEDDED, false, afmData, pfbData, false, true);
+        public FontProgram getFontProgram() throws IOException {
+            if (fontProgram == null && load()) {
+                fontProgram = FontProgramFactory.createType1Font(afmData, pfbData);
+            }
+            return fontProgram;
         }
-        public BaseFont getBaseFont(PdfDictionary fontDict) {
+        public PdfFont getBaseFont() throws IOException {
+            return PdfFontFactory.createFont(getFontProgram(), PdfEncodings.WINANSI, true);
+        }
+        public PdfFont getBaseFont(PdfDictionary fontDict) {
             return getBaseFont(AnalEncoding.getPdfEncoding(fontDict));
         }
-        public BaseFont getBaseFont(AnalEncoding encoding) {
+        public PdfFont getBaseFont(AnalEncoding encoding) {
             try {
-                return BaseFont.createFont(fontName + ".afm", encoding.unparseItext(), BaseFont.EMBEDDED, false, afmData, pfbData, false, true);
+                return PdfFontFactory.createFont(getFontProgram(), encoding.unparseItext(), true);
             } catch (Throwable e) {
                 return null;
             }
         }
-        public PdfDictionary getFontDescriptor(BaseFont font) throws DocumentException {
+        public PdfDictionary getFontDescriptor(PdfFont font) throws IOException {
             Class<?>[] classArray = {PdfIndirectReference.class};
             try {
                 java.lang.reflect.Method method = font.getClass().getDeclaredMethod("getFontDescriptor", classArray);
                 method.setAccessible(true);
-                Object[] args = {dataReference};
+                Object[] args = {fontName};
                 PdfDictionary descriptor = (PdfDictionary) method.invoke(font, args);
-                String theirName = PdfName.decodeName(descriptor.getAsName(PdfName.FONTNAME).toString());
+                String theirName = descriptor.getAsName(PdfName.FontName).getValue();
                 if (!theirName.equals(fontName)) {
                     System.err.println(baseName + " replacement: expected " + fontName + ", got " + theirName);
                     fontName = theirName;
                 }
                 return descriptor;
-            } catch (Throwable t) {
-                throw new NullPointerException();
-            }
-        }
-        public PdfStream getFullFontStream(BaseFont font) throws DocumentException {
-            Class<?>[] classArray = {};
-            try {
-                java.lang.reflect.Method method = font.getClass().getDeclaredMethod("getFullFontStream", classArray);
-                method.setAccessible(true);
-                Object[] args = {};
-                return (PdfStream) method.invoke(font, args);
             } catch (Throwable t) {
                 throw new NullPointerException();
             }
@@ -251,7 +250,7 @@ public class App {
             return defaultEncodings.get(name);
         }
         static private AnalEncoding getBasePdfEncoding(PdfDictionary font) {
-            String fontNameStr = font.getAsName(PdfName.BASEFONT).toString();
+            String fontNameStr = font.getAsName(PdfName.BaseFont).toString();
             if (fontNameStr == "/Symbol")
                 return getEncoding("SymbolEncoding");
             else if (fontNameStr == "/ZapfDingbats")
@@ -260,25 +259,25 @@ public class App {
                 return getEncoding("StandardEncoding");
         }
         static public AnalEncoding getPdfEncoding(PdfDictionary font) {
-            PdfObject encodingObj = font.get(PdfName.ENCODING);
+            PdfObject encodingObj = font.get(PdfName.Encoding);
             if (encodingObj != null && encodingObj.isName())
                 return getEncoding(((PdfName) encodingObj).toString().substring(1));
             else if (encodingObj != null && (encodingObj.isDictionary() || encodingObj.isIndirect())) {
-                PdfDictionary encodingDict = font.getAsDict(PdfName.ENCODING);
-                PdfName base = encodingDict.getAsName(PdfName.BASEENCODING);
+                PdfDictionary encodingDict = font.getAsDictionary(PdfName.Encoding);
+                PdfName base = encodingDict.getAsName(PdfName.BaseEncoding);
                 AnalEncoding e;
                 if (base != null)
                     e = getEncoding(base.toString().substring(1)).copy();
                 else
                     e = getBasePdfEncoding(font).copy();
-                PdfArray differences = encodingDict.getAsArray(PdfName.DIFFERENCES);
+                PdfArray differences = encodingDict.getAsArray(PdfName.Differences);
                 if (differences != null) {
                     int nextCode = -1;
                     for (int i = 0; i < differences.size(); ++i)
-                        if (differences.getPdfObject(i).isNumber())
+                        if (differences.get(i).isNumber())
                             nextCode = differences.getAsNumber(i).intValue();
                         else if (nextCode >= 0 && nextCode < 256) {
-                            e.encoding[nextCode] = PdfName.decodeName(differences.getAsName(i).toString());
+                            e.encoding[nextCode] = differences.getAsName(i).getValue();
                             ++nextCode;
                         }
                 }
@@ -310,7 +309,7 @@ public class App {
         public String lofoot = null;
         public String rofoot = null;
         public boolean twoSided = false;
-        public BaseFont footerFont = null;
+        public PdfFont footerFont = null;
         public float lmargin = 54;
         public float rmargin = 54;
         public float bmargin = 28;
@@ -330,7 +329,7 @@ public class App {
         public boolean strip = false;
     }
 
-    public static void main(String[] args) throws IOException, DocumentException, NumberFormatException, ParseException {
+    public static void main(String[] args) throws IOException, NumberFormatException, ParseException {
         new App().runMain(args);
     }
 
@@ -499,7 +498,7 @@ public class App {
         System.exit(status);
         return null;
     }
-    private void setFooterFont(AppArgs appArgs, String fileName) throws IOException, DocumentException {
+    private void setFooterFont(AppArgs appArgs, String fileName) throws IOException {
         if (fileName.indexOf('.') < 0) {
             EmbedFontInfo embedFont = lookupEmbedFont(fileName);
             if (embedFont != null) {
@@ -513,57 +512,61 @@ public class App {
             }
         }
         try {
-            byte[] afmData = null;
-            byte[] pfbData = null;
             int comma = fileName.indexOf(',');
-            if (comma >= 0 && fileName.toLowerCase().endsWith(".pfb")) {
-                fileName = fileName.substring(comma + 1) + "," + fileName.substring(0, comma);
-                comma = fileName.indexOf(',');
-            }
+            PdfFont font = null;
             if (comma >= 0) {
-                java.io.InputStream fs = new java.io.FileInputStream(fileName.substring(0, comma));
-                pfbData = IOUtils.toByteArray(fs);
-                fileName = fileName.substring(comma + 1);
+                String fileName1 = fileName.substring(0, comma);
+                String fileName2 = fileName.substring(comma + 1);
+                if (fileName2.toLowerCase().endsWith(".pfb")) {
+                    String tmp = fileName1;
+                    fileName1 = fileName2;
+                    fileName2 = tmp;
+                }
+                if (fileName1.toLowerCase().endsWith(".pfb")
+                    && fileName2.toLowerCase().endsWith(".afm")) {
+                    java.io.InputStream pfbStream = new java.io.FileInputStream(fileName1);
+                    java.io.InputStream afmStream = new java.io.FileInputStream(fileName2);
+                    byte[] pfbData = IOUtils.toByteArray(pfbStream);
+                    byte[] afmData = IOUtils.toByteArray(afmStream);
+                    FontProgram fontProgram = FontProgramFactory.createType1Font(afmData, pfbData);
+                    font = PdfFontFactory.createFont(fontProgram, PdfEncodings.WINANSI, true);
+                }
             }
-            java.io.InputStream fs = new java.io.FileInputStream(fileName);
-            afmData = IOUtils.toByteArray(fs);
-            String encoding = BaseFont.WINANSI;
-            if (fileName.toLowerCase().endsWith(".ttf") || fileName.toLowerCase().endsWith(".otf"))
-                encoding = BaseFont.IDENTITY_H;
-            appArgs.footerFont = BaseFont.createFont(fileName, encoding, BaseFont.EMBEDDED, false, afmData, pfbData);
+            if (font == null) {
+                java.io.InputStream fileStream = new java.io.FileInputStream(fileName);
+                byte[] fileData = IOUtils.toByteArray(fileStream);
+                font = PdfFontFactory.createFont(fileData, PdfEncodings.IDENTITY_H, true);
+            }
+            appArgs.footerFont = font;
         } catch (IOException e) {
             System.err.println(e.getMessage());
-            throw e;
-        } catch (DocumentException e) {
-            System.err.println(fileName + ": Not a font");
             throw e;
         }
     }
 
-    private PdfStamper getStamper() throws IOException, DocumentException {
+    private PdfDocument getStamper() throws IOException {
         if (theStamper == null) {
             java.io.OutputStream output;
             if (appArgs.outputFile.equals("-"))
                 output = System.out;
             else
                 output = new FileOutputStream(appArgs.outputFile);
-            theStamper = new PdfStamper(reader, output);
+            theStamper = new PdfDocument(reader.getReader(), new PdfWriter(output));
         }
         return theStamper;
     }
 
-    public void runMain(String[] args) throws IOException, DocumentException, NumberFormatException {
+    public void runMain(String[] args) throws IOException, NumberFormatException {
         appArgs = parseArgs(args);
 
         // read and merge files
         ByteArrayOutputStream mergedOutputStream = null;
-        Document mergedDocument = null;
-        PdfSmartCopy mergedCopy = null;
+        PdfDocument mergedDocument = null;
+        PdfMerger mergedCopy = null;
         if (appArgs.inputFiles.size() > 1 || appArgs.blankPages > 0) {
             mergedOutputStream = new ByteArrayOutputStream();
-            mergedDocument = new Document();
-            mergedCopy = new PdfSmartCopy(mergedDocument, mergedOutputStream);
-            mergedDocument.open();
+            mergedDocument = new PdfDocument(new PdfWriter(mergedOutputStream));
+            mergedCopy = new PdfMerger(mergedDocument);
         }
 
         int pageCount = 0;
@@ -573,27 +576,29 @@ public class App {
                 r = new PdfReader(System.in);
             else
                 r = new PdfReader(appArgs.inputFiles.get(filePos));
+            PdfDocument doc = new PdfDocument(r);
 
-            pageCount += r.getNumberOfPages();
+            pageCount += doc.getNumberOfPages();
             if (filePos + 1 == appArgs.paginateFilePosition && appArgs.skipPagination < 0)
                 appArgs.skipPagination = pageCount;
 
             if (mergedCopy != null) {
                 if (filePos == 0)
-                    mergedDocument.setPageSize(r.getPageSize(1));
-                for (int p = 1; p <= r.getNumberOfPages(); ++p)
-                    mergedCopy.addPage(mergedCopy.getImportedPage(r, p));
-                r.close();
+                    mergedDocument.setDefaultPageSize(doc.getDefaultPageSize());
+                mergedCopy.merge(doc, 1, doc.getNumberOfPages());
+                doc.close();
             } else
-                reader = r;
+                reader = doc;
         }
 
         for (int i = 0; i < appArgs.blankPages; ++i)
-            mergedCopy.addPage(mergedDocument.getPageSize(), 0);
+            mergedDocument.addNewPage(mergedDocument.getDefaultPageSize());
 
         if (mergedCopy != null) {
             mergedDocument.close();
-            reader = new PdfReader(mergedOutputStream.toByteArray());
+            ByteArrayInputStream inputStream = new ByteArrayInputStream(mergedOutputStream.toByteArray());
+            mergedOutputStream.close();
+            reader = new PdfDocument(new PdfReader(inputStream));
             getStamper();
             documentModified = true;
         }
@@ -702,14 +707,13 @@ public class App {
             || complexFooterString(appArgs.lofoot) || complexFooterString(appArgs.refoot)
             || complexFooterString(appArgs.rofoot);
     }
-    public void paginate() throws IOException, DocumentException {
+    public void paginate() throws IOException {
         if (appArgs.footerFont == null && !complexFooter()) {
             java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
             byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
-            appArgs.footerFont = BaseFont.createFont("HotCRPNumberTime.otf", BaseFont.WINANSI, true, false, numberFontBytes, null);
+            appArgs.footerFont = PdfFontFactory.createFont(numberFontBytes, PdfEncodings.WINANSI, true);
         } else if (appArgs.footerFont == null)
             appArgs.footerFont = lookupEmbedFont("Times-Roman").getBaseFont();
-        Font font = new Font(appArgs.footerFont, appArgs.footerSize);
         int firstLocalPage = 1 + Math.max(appArgs.skipPagination, 0);
 
         for (int p = firstLocalPage; p <= reader.getNumberOfPages() - appArgs.blankPages; ++p) {
@@ -721,26 +725,30 @@ public class App {
             String rfoot = pageno % 2 == 0 ? appArgs.refoot : appArgs.rofoot;
             if (rfoot == null)
                 rfoot = flipped ? appArgs.lfoot : appArgs.rfoot;
-            com.itextpdf.text.Rectangle pagebox = reader.getPageSize(p);
+            Rectangle pagebox = reader.getPage(p).getPageSize();
             float lx = pagebox.getLeft() + (flipped ? appArgs.rmargin : appArgs.lmargin);
             float rx = pagebox.getRight() - (flipped ? appArgs.lmargin : appArgs.rmargin);
             float by = pagebox.getBottom() + appArgs.bmargin;
-            PdfContentByte cb = getStamper().getOverContent(p);
+            PdfCanvas cb = new PdfCanvas(getStamper().getPage(p));
+            cb.setFontAndSize(appArgs.footerFont, appArgs.footerSize);
             if (lfoot != "") {
-                Phrase text = new Phrase(expandFooter(lfoot, pageno), font);
-                ColumnText.showTextAligned(cb, Element.ALIGN_LEFT, text, lx, by, 0);
+                Paragraph text = new Paragraph(expandFooter(lfoot, pageno));
+                new Canvas(cb, getStamper(), pagebox)
+                    .showTextAligned(text, lx, by, p, TextAlignment.LEFT, VerticalAlignment.BOTTOM, 0);
             }
             if (appArgs.cfoot != "") {
-                Phrase text = new Phrase(expandFooter(appArgs.cfoot, pageno), font);
-                ColumnText.showTextAligned(cb, Element.ALIGN_CENTER, text, (lx + rx) / 2, by, 0);
+                Paragraph text = new Paragraph(expandFooter(appArgs.cfoot, pageno));
+                new Canvas(cb, getStamper(), pagebox)
+                    .showTextAligned(text, (lx + rx) / 2, by, p, TextAlignment.CENTER, VerticalAlignment.BOTTOM, 0);
             }
             if (rfoot != "") {
-                Phrase text = new Phrase(expandFooter(rfoot, pageno), font);
-                ColumnText.showTextAligned(cb, Element.ALIGN_RIGHT, text, rx, by, 0);
+                Paragraph text = new Paragraph(expandFooter(rfoot, pageno));
+                new Canvas(cb, getStamper(), pagebox)
+                    .showTextAligned(text, rx, by, p, TextAlignment.RIGHT, VerticalAlignment.BOTTOM, 0);
             }
             if (appArgs.footerRuleWidth > 0.0) {
                 cb.saveState();
-                cb.setRGBColorFill(0, 0, 0);
+                cb.setFillColorRgb(0, 0, 0);
                 cb.rectangle(lx, pagebox.getBottom() + appArgs.footerRulePosition, rx - lx, appArgs.footerRuleWidth);
                 cb.fill();
                 cb.restoreState();
@@ -749,34 +757,34 @@ public class App {
         }
     }
 
-    public void checkFonts() throws IOException, DocumentException {
+    public void checkFonts() throws IOException {
         // parsing/traversing borrowed from `poppler/util/pdffonts`
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
-            PdfDictionary page = reader.getPageN(p);
-            PdfDictionary res = page.getAsDict(PdfName.RESOURCES);
+            PdfDictionary page = reader.getPage(p).getPdfObject();
+            PdfDictionary res = page.getAsDictionary(PdfName.Resources);
             checkFontsDict(p, res);
-            PdfArray annots = page.getAsArray(PdfName.ANNOTS);
+            PdfArray annots = page.getAsArray(PdfName.Annots);
             if (annots != null)
                 for (int j = 0; j < annots.size(); j++) {
-                    PdfDictionary annot = annots.getAsDict(j);
-                    checkFontsDict(j, annot.getAsDict(PdfName.RESOURCES));
+                    PdfDictionary annot = annots.getAsDictionary(j);
+                    checkFontsDict(j, annot.getAsDictionary(PdfName.Resources));
                 }
         }
     }
     public void checkFontsDict(int p, PdfDictionary res) {
         if (res == null)
             return;
-        checkFontsRefs(p, res, PdfName.XOBJECT);
-        checkFontsRefs(p, res, PdfName.PATTERN);
-        PdfDictionary fonts = res.getAsDict(PdfName.FONT);
+        checkFontsRefs(p, res, PdfName.XObject);
+        checkFontsRefs(p, res, PdfName.Pattern);
+        PdfDictionary fonts = res.getAsDictionary(PdfName.Font);
         if (fonts != null) {
-            for (PdfName key : fonts.getKeys())
+            for (PdfName key : fonts.keySet())
                 checkFont(p, fonts.get(key));
         }
     }
     static private String refName(PdfObject obj) {
         PdfIndirectReference ref = (PdfIndirectReference) obj;
-        return ref.getNumber() + " " + ref.getGeneration();
+        return ref.getObjNumber() + " " + ref.getGenNumber();
     }
     private boolean seenRef(PdfObject obj) {
         String refname = refName(obj);
@@ -788,17 +796,20 @@ public class App {
         }
     }
     public void checkFontsRefs(int p, PdfDictionary res, PdfName xkey) {
-        PdfDictionary xres = res.getAsDict(xkey);
+        PdfDictionary xres = res.getAsDictionary(xkey);
         if (xres == null)
             return;
-        for (PdfName key : xres.getKeys()) {
+        for (PdfName key : xres.keySet()) {
             PdfObject obj = xres.get(key);
-            if (obj.isIndirect() && seenRef(obj))
-                continue;
-            obj = PdfReader.getPdfObject(obj);
+            if (obj.isIndirect()) {
+                if (seenRef(obj))
+                    continue;
+                else
+                    obj = ((PdfIndirectReference) obj).getRefersTo(true);
+            }
             if (obj.isStream()) {
                 PdfDictionary strdict = (PdfDictionary) obj;
-                PdfDictionary strres = strdict.getAsDict(PdfName.RESOURCES);
+                PdfDictionary strres = strdict.getAsDictionary(PdfName.Resources);
                 if (strres != null && strres != res)
                     checkFontsDict(p, strres);
             }
@@ -810,7 +821,7 @@ public class App {
             if (seenRef(fontobj))
                 return;
             refname = refName(fontobj);
-            fontobj = PdfReader.getPdfObject(fontobj);
+            fontobj = ((PdfIndirectReference) fontobj).getRefersTo(true);
         }
         if (!fontobj.isDictionary())
             return;
@@ -818,42 +829,42 @@ public class App {
         PdfDictionary font = (PdfDictionary) fontobj;
         PdfDictionary base = font;
 
-        PdfName name = font.getAsName(PdfName.BASEFONT);
+        PdfName name = font.getAsName(PdfName.BaseFont);
         String namestr;
         if (name == null)
             namestr = "[no name]";
         else
-            namestr = PdfName.decodeName(name.toString());
+            namestr = name.getValue();
 
-        PdfName declared_type = font.getAsName(PdfName.SUBTYPE);
-        boolean isType0 = declared_type != null && declared_type.equals(PdfName.TYPE0);
+        PdfName declared_type = font.getAsName(PdfName.Subtype);
+        boolean isType0 = declared_type != null && declared_type.equals(PdfName.Type0);
 
         PdfName descendant_type = null;
-        PdfArray descendants = font.getAsArray(PdfName.DESCENDANTFONTS);
+        PdfArray descendants = font.getAsArray(PdfName.DescendantFonts);
         if (descendants != null && descendants.size() > 0) {
-            PdfDictionary descendant0 = descendants.getAsDict(0);
+            PdfDictionary descendant0 = descendants.getAsDictionary(0);
             if (descendant0 != null) {
                 base = descendant0;
-                descendant_type = base.getAsName(PdfName.SUBTYPE);
+                descendant_type = base.getAsName(PdfName.Subtype);
             }
         }
 
         PdfName embedded_type = null;
-        PdfDictionary desc = base.getAsDict(PdfName.FONTDESCRIPTOR);
+        PdfDictionary desc = base.getAsDictionary(PdfName.FontDescriptor);
         if (desc == null) {
-            if (declared_type.equals(PdfName.TYPE3)
-                && base.getAsDict(PdfName.CHARPROCS) != null)
-                embedded_type = PdfName.TYPE3;
+            if (declared_type.equals(PdfName.Type3)
+                && base.getAsDictionary(PdfName.CharProcs) != null)
+                embedded_type = PdfName.Type3;
             else
                 embedded_type = null;
-        } else if (desc.get(PdfName.FONTFILE) != null)
-            embedded_type = PdfName.TYPE1;
-        else if (desc.get(PdfName.FONTFILE2) != null)
-            embedded_type = isType0 ? PdfName.CIDFONTTYPE2 : PdfName.TRUETYPE;
+        } else if (desc.get(PdfName.FontFile) != null)
+            embedded_type = PdfName.Type1;
+        else if (desc.get(PdfName.FontFile2) != null)
+            embedded_type = isType0 ? PdfName.CIDFontType2 : PdfName.TrueType;
         else {
-            PdfStream fontdict = desc.getAsStream(PdfName.FONTFILE3);
+            PdfStream fontdict = desc.getAsStream(PdfName.FontFile3);
             if (fontdict != null)
-                embedded_type = fontdict.getAsName(PdfName.SUBTYPE);
+                embedded_type = fontdict.getAsName(PdfName.Subtype);
             else
                 embedded_type = null;
         }
@@ -864,7 +875,7 @@ public class App {
         if (claimed_type == null)
             claimed_type = declared_type;
 
-        if (claimed_type.equals(PdfName.TYPE3)) {
+        if (claimed_type.equals(PdfName.Type3)) {
             if (!type3FontNames.contains(namestr)) {
                 type3FontNames.add(namestr);
                 if (namestr.equals("[no name]"))
@@ -886,10 +897,10 @@ public class App {
         if (embedFontMap == null)
             makeEmbedFontMap();
         EmbedFontInfo embedFont = embedFontMap.get(fontName);
-        if (embedFont == null || !embedFont.load())
-            return null;
-        else
+        if (embedFont != null && embedFont.load())
             return embedFont;
+        else
+            return null;
     }
     private boolean tryEmbed(String fontName, PdfDictionary font) {
         EmbedFontInfo embedFont = lookupEmbedFont(fontName);
@@ -897,57 +908,46 @@ public class App {
             return false;
 
         AnalEncoding encoding = AnalEncoding.getPdfEncoding(font);
-        BaseFont baseFont = embedFont.getBaseFont(encoding);
+        PdfFont baseFont = embedFont.getBaseFont(encoding);
         if (baseFont == null)
             return false;
-
-        if (embedFont.dataReference == null) {
-            try {
-                PdfStream stream = embedFont.getFullFontStream(baseFont);
-                embedFont.dataReference = getStamper().getWriter().addToBody(stream).getIndirectReference();
-            } catch (Throwable e) {
-                return false;
-            }
-        }
 
         if (embedFont.descriptorReference == null) {
             try {
                 PdfDictionary newDescriptor = embedFont.getFontDescriptor(baseFont);
-                embedFont.descriptorReference = getStamper().getWriter().addToBody(newDescriptor).getIndirectReference();
+                embedFont.descriptorReference = newDescriptor.makeIndirect(getStamper()).getIndirectReference();
             } catch (Throwable e) {
                 return false;
             }
         }
 
-        font.put(PdfName.BASEFONT, new PdfName(embedFont.fontName));
-        font.put(PdfName.FONTDESCRIPTOR, embedFont.descriptorReference);
-        if (!font.contains(PdfName.WIDTHS)) {
+        font.put(PdfName.BaseFont, new PdfName(embedFont.fontName));
+        font.put(PdfName.FontDescriptor, embedFont.descriptorReference);
+        if (!font.containsKey(PdfName.Widths)) {
             int firstChar = -1, lastChar = -1;
             PdfArray widths = new PdfArray();
-            int[] w = new int[1];
             for (int ch = 0; ch < 256; ++ch)
                 if (encoding.encoding[ch] != null && !encoding.encoding[ch].equals(".notdef")) {
                     if (firstChar < 0)
                         firstChar = ch;
                     else {
-                        w[0] = 0;
                         for (; lastChar + 1 < ch; ++lastChar)
-                            widths.add(w);
+                            widths.add(new PdfNumber(0));
                     }
                     lastChar = ch;
-                    w[0] = baseFont.getWidth(AnalEncoding.unicodeFor(encoding.encoding[ch]));
-                    widths.add(w);
+                    int w = baseFont.getWidth(AnalEncoding.unicodeFor(encoding.encoding[ch]));
+                    widths.add(new PdfNumber(w));
                 }
             try {
-                font.put(PdfName.FIRSTCHAR, new PdfNumber(firstChar));
-                font.put(PdfName.LASTCHAR, new PdfNumber(lastChar));
-                font.put(PdfName.WIDTHS, getStamper().getWriter().addToBody(widths).getIndirectReference());
+                font.put(PdfName.FirstChar, new PdfNumber(firstChar));
+                font.put(PdfName.LastChar, new PdfNumber(lastChar));
+                font.put(PdfName.Widths, widths.makeIndirect(getStamper()).getIndirectReference());
             } catch (Throwable e) {
                 return false;
             }
         }
 
-        /*for (PdfName n : font.getKeys())
+        /*for (PdfName n : font.keySet())
             System.err.println(n.toString() + " " + font.get(n).toString());
         System.err.println(AnalEncoding.getPdfEncoding(font).unparseItext());*/
 
@@ -1020,63 +1020,63 @@ public class App {
         addEmbedFont("ZapfDingbats", "Dingbats", "uzdr", true);
     }
 
-    public void checkJavascripts(boolean strip) throws IOException, DocumentException {
-        PdfDictionary doccatalog = reader.getCatalog();
-        PdfDictionary aa = doccatalog.getAsDict(PdfName.AA);
+    public void checkJavascripts(boolean strip) throws IOException {
+        PdfDictionary doccatalog = reader.getCatalog().getPdfObject();
+        PdfDictionary aa = doccatalog.getAsDictionary(PdfName.AA);
         if (aa != null)
             checkJavascripts(aa, strip, " at document level");
 
-        PdfDictionary names = doccatalog.getAsDict(PdfName.NAMES);
+        PdfDictionary names = doccatalog.getAsDictionary(PdfName.Names);
         if (names != null) {
-            if (names.get(PdfName.JAVASCRIPT) != null)
-                recordJavascript(names, PdfName.JAVASCRIPT, strip, " in global scripts");
+            if (names.get(PdfName.JavaScript) != null)
+                recordJavascript(names, PdfName.JavaScript, strip, " in global scripts");
         }
 
-        PdfDictionary form = doccatalog.getAsDict(PdfName.ACROFORM);
+        PdfDictionary form = doccatalog.getAsDictionary(PdfName.AcroForm);
         if (form != null) {
-            PdfArray fields = doccatalog.getAsArray(PdfName.FIELDS);
+            PdfArray fields = doccatalog.getAsArray(PdfName.Fields);
             for (int j = 0; j < fields.size(); ++j)
-                checkFormFieldJavascripts(fields.getAsDict(j), strip);
+                checkFormFieldJavascripts(fields.getAsDictionary(j), strip);
         }
 
         for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
-            PdfDictionary page = reader.getPageN(p);
-            aa = page.getAsDict(PdfName.AA);
+            PdfDictionary page = reader.getPage(p).getPdfObject();
+            aa = page.getAsDictionary(PdfName.AA);
             if (aa != null)
                 checkJavascripts(aa, strip, " on page " + p);
-            PdfArray annots = page.getAsArray(PdfName.ANNOTS);
+            PdfArray annots = page.getAsArray(PdfName.Annots);
             if (annots != null)
                 for (int j = 0; j < annots.size(); j++) {
-                    PdfDictionary annot = annots.getAsDict(j);
-                    aa = annot.getAsDict(PdfName.AA);
+                    PdfDictionary annot = annots.getAsDictionary(j);
+                    aa = annot.getAsDictionary(PdfName.AA);
                     if (aa != null)
                         checkJavascripts(aa, strip, " in page " + p + " annotation");
                 }
         }
     }
     private void checkFormFieldJavascripts(PdfDictionary field, boolean strip) {
-        PdfDictionary aa = field.getAsDict(PdfName.AA);
+        PdfDictionary aa = field.getAsDictionary(PdfName.AA);
         if (aa != null)
             checkJavascripts(aa, strip, " in form");
 
-        PdfArray kids = field.getAsArray(PdfName.KIDS);
+        PdfArray kids = field.getAsArray(PdfName.Kids);
         for (int j = 0; j < kids.size(); ++j)
-            checkFormFieldJavascripts(kids.getAsDict(j), strip);
+            checkFormFieldJavascripts(kids.getAsDictionary(j), strip);
     }
     private void checkJavascripts(PdfDictionary holder, boolean strip, String where) {
-        for (PdfName key : holder.getKeys()) {
-            PdfDictionary value = holder.getAsDict(key);
+        for (PdfName key : holder.keySet()) {
+            PdfDictionary value = holder.getAsDictionary(key);
             PdfObject stype = null;
             if (value != null)
                 stype = value.get(PdfName.S);
             if (stype == null || !stype.isName())
                 continue;
             PdfName sname = (PdfName) stype;
-            if (stype == PdfName.JAVASCRIPT)
+            if (stype == PdfName.JavaScript)
                 recordJavascript(holder, key, strip, where);
-            else if (stype == PdfName.RENDITION && value.get(PdfName.JS) != null)
+            else if (stype == PdfName.Rendition && value.get(PdfName.JS) != null)
                 recordJavascript(value, PdfName.JS, strip, where + " [rendition]");
-            else if (stype == PdfName.IMPORTDATA)
+            else if (stype == PdfName.ImportData)
                 recordJavascript(holder, key, strip, where + " [import data]");
         }
     }
@@ -1090,14 +1090,14 @@ public class App {
 
     public void checkAnonymity(boolean strip) {
         PdfDictionary trailer = reader.getTrailer();
-        PdfDictionary info = trailer != null ? trailer.getAsDict(PdfName.INFO) : null;
+        PdfDictionary info = trailer != null ? trailer.getAsDictionary(PdfName.Info) : null;
         PdfString author = null;
         if (info != null)
-            author = info.getAsString(PdfName.AUTHOR);
+            author = info.getAsString(PdfName.Author);
         if (author != null && !author.toString().equals("")) {
             if (strip) {
                 documentModified = true;
-                info.remove(PdfName.AUTHOR);
+                info.remove(PdfName.Author);
             }
             addError(ERR_ANONYMITY, (strip ? "Stripping " : "Document contains ") + "author metadata “" + author.toString() + "”; submissions should be anonymous.");
         }

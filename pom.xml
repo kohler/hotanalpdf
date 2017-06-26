@@ -15,9 +15,18 @@
   <dependencies>
     <dependency>
       <groupId>com.itextpdf</groupId>
-      <artifactId>itextpdf</artifactId>
-      <version>5.5.9</version>
-      <scope>compile</scope>
+      <artifactId>kernel</artifactId>
+      <version>7.0.3</version>
+    </dependency>
+    <dependency>
+      <groupId>com.itextpdf</groupId>
+      <artifactId>io</artifactId>
+      <version>7.0.3</version>
+    </dependency>
+    <dependency>
+      <groupId>com.itextpdf</groupId>
+      <artifactId>layout</artifactId>
+      <version>7.0.3</version>
     </dependency>
     <dependency>
       <groupId>commons-io</groupId>
