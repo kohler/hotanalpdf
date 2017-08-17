@@ -262,7 +262,7 @@ public class App {
             PdfObject encodingObj = font.get(PdfName.Encoding);
             if (encodingObj != null && encodingObj.isName())
                 return getEncoding(((PdfName) encodingObj).toString().substring(1));
-            else if (encodingObj != null && (encodingObj.isDictionary() || encodingObj.isIndirect())) {
+            else if (encodingObj != null && (encodingObj.isDictionary() || encodingObj.isIndirectReference())) {
                 PdfDictionary encodingDict = font.getAsDictionary(PdfName.Encoding);
                 PdfName base = encodingDict.getAsName(PdfName.BaseEncoding);
                 AnalEncoding e;
@@ -620,12 +620,13 @@ public class App {
             getStamper();
         if (theStamper != null)
             theStamper.close();
+        int numPages = reader.getNumberOfPages();
         reader.close();
 
         if (appArgs.jsonOutput) {
             JsonObjectBuilder result = Json.createObjectBuilder()
                 .add("ok", true).add("at", (long) (System.currentTimeMillis() / 1000L))
-                .add("npages", reader.getNumberOfPages());
+                .add("npages", numPages);
             if (maybeModified)
                 result.add("modified", documentModified);
             JsonArrayBuilder errfResult = Json.createArrayBuilder();
@@ -801,7 +802,7 @@ public class App {
             return;
         for (PdfName key : xres.keySet()) {
             PdfObject obj = xres.get(key);
-            if (obj.isIndirect()) {
+            if (obj.isIndirectReference()) {
                 if (seenRef(obj))
                     continue;
                 else
@@ -817,7 +818,7 @@ public class App {
     }
     public void checkFont(int p, PdfObject fontobj) {
         String refname = "[direct]";
-        if (fontobj.isIndirect()) {
+        if (fontobj.isIndirectReference()) {
             if (seenRef(fontobj))
                 return;
             refname = refName(fontobj);
