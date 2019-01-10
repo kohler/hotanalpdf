@@ -25,6 +25,7 @@ import com.itextpdf.kernel.pdf.PdfStream;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfPage;
+import com.itextpdf.kernel.geom.PageSize;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -36,6 +37,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.io.StringWriter;
+import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.Vector;
@@ -546,6 +548,43 @@ public class App {
         }
     }
 
+    private PageSize calculateDefaultPageSize(PdfDocument doc) {
+        TreeMap<PageSize, Integer> pageSizeMap = new TreeMap<PageSize, Integer>(
+            new java.util.Comparator<PageSize>() {
+                @Override
+                public int compare(PageSize e1, PageSize e2) {
+                    if (e1.getWidth() < e2.getWidth()
+                        || (e1.getWidth() == e2.getWidth() && e1.getHeight() < e2.getHeight()))
+                        return -1;
+                    else if (e1.getWidth() == e2.getWidth() && e1.getHeight() == e2.getHeight())
+                        return 0;
+                    else
+                        return 1;
+                }
+            }
+        );
+        for (int p = 1; p <= doc.getNumberOfPages(); ++p) {
+            PageSize thisPageSize = new PageSize(doc.getPage(p).getPageSize());
+            Integer n = pageSizeMap.get(thisPageSize);
+            if (n == null)
+                pageSizeMap.put(thisPageSize, 1);
+            else
+                pageSizeMap.put(thisPageSize, n + 1);
+        }
+        if (pageSizeMap.isEmpty()
+            || pageSizeMap.containsKey(doc.getDefaultPageSize()))
+            return doc.getDefaultPageSize();
+        PageSize pageSize = null;
+        int count = 0;
+        for (Map.Entry<PageSize, Integer> entry : pageSizeMap.entrySet()) {
+            if (entry.getValue() > count) {
+                pageSize = entry.getKey();
+                count = entry.getValue();
+            }
+        }
+        return pageSize;
+    }
+
     private PdfReader getInputFileReader(int filePos) throws IOException {
         if (appArgs.inputFiles.get(filePos).equals("-"))
             return new PdfReader(System.in);
@@ -573,7 +612,7 @@ public class App {
                     && appArgs.skipPagination < 0)
                     appArgs.skipPagination = pageCount;
                 if (filePos == 0)
-                    mergedDocument.setDefaultPageSize(doc.getDefaultPageSize());
+                    mergedDocument.setDefaultPageSize(calculateDefaultPageSize(doc));
                 mergedCopy.merge(doc, 1, doc.getNumberOfPages());
                 doc.close();
             }
