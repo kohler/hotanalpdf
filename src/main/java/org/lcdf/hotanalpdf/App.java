@@ -704,6 +704,9 @@ public class App {
             || complexFooterString(appArgs.lofoot) || complexFooterString(appArgs.refoot)
             || complexFooterString(appArgs.rofoot);
     }
+    private Paragraph footerParagraph(String text) {
+        return new Paragraph(text).setFont(appArgs.footerFont).setFontSize(appArgs.footerSize);
+    }
     public void paginate() throws IOException {
         if (appArgs.footerFont == null && !complexFooter()) {
             java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
@@ -727,19 +730,18 @@ public class App {
             float rx = pagebox.getRight() - (flipped ? appArgs.lmargin : appArgs.rmargin);
             float by = pagebox.getBottom() + appArgs.bmargin;
             PdfCanvas cb = new PdfCanvas(thepdf, p);
-            cb.setFontAndSize(appArgs.footerFont, appArgs.footerSize);
             if (lfoot != "") {
-                Paragraph text = new Paragraph(expandFooter(lfoot, pageno));
+                Paragraph text = footerParagraph(expandFooter(lfoot, pageno));
                 new Canvas(cb, thepdf, pagebox)
                     .showTextAligned(text, lx, by, p, TextAlignment.LEFT, VerticalAlignment.BOTTOM, 0);
             }
             if (appArgs.cfoot != "") {
-                Paragraph text = new Paragraph(expandFooter(appArgs.cfoot, pageno));
+                Paragraph text = footerParagraph(expandFooter(appArgs.cfoot, pageno));
                 new Canvas(cb, thepdf, pagebox)
                     .showTextAligned(text, (lx + rx) / 2, by, p, TextAlignment.CENTER, VerticalAlignment.BOTTOM, 0);
             }
             if (rfoot != "") {
-                Paragraph text = new Paragraph(expandFooter(rfoot, pageno));
+                Paragraph text = footerParagraph(expandFooter(rfoot, pageno));
                 new Canvas(cb, thepdf, pagebox)
                     .showTextAligned(text, rx, by, p, TextAlignment.RIGHT, VerticalAlignment.BOTTOM, 0);
             }
