@@ -547,7 +547,7 @@ public class App {
     }
 
     private PdfReader getInputFileReader(int filePos) throws IOException {
-        if (appArgs.inputFiles.get(filePos).equals("="))
+        if (appArgs.inputFiles.get(filePos).equals("-"))
             return new PdfReader(System.in);
         else
             return new PdfReader(appArgs.inputFiles.get(filePos));
