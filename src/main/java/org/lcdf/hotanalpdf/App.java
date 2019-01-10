@@ -327,6 +327,7 @@ public class App {
         public boolean checkJS = false;
         public boolean checkAnonymity = false;
         public boolean strip = false;
+        public boolean mayModify = false;
     }
 
     public static void main(String[] args) throws IOException, NumberFormatException, ParseException {
@@ -485,8 +486,10 @@ public class App {
                 System.err.println("`--strip` requires `--js` or `--anonymity`");
                 throw new NumberFormatException();
             }
-            if (appArgs.strip && appArgs.jsonOutput && appArgs.outputFile.equals("-")) {
-                System.err.println("`--json` plus `--strip` requires output file");
+            appArgs.mayModify = appArgs.paginate || appArgs.strip || appArgs.embedFonts
+                || appArgs.blankPages > 0;
+            if (appArgs.mayModify && appArgs.jsonOutput && appArgs.outputFile.equals("-")) {
+                System.err.println("`--json` plus modification options requires output file");
                 throw new NumberFormatException();
             }
             if (!cl.hasOption("help"))
@@ -595,8 +598,6 @@ public class App {
     public void runMain(String[] args) throws IOException, NumberFormatException {
         appArgs = parseArgs(args);
 
-        boolean maybeModified = appArgs.paginate || appArgs.strip || appArgs.embedFonts;
-
         // read and merge files
         PdfReader reader;
         if (appArgs.inputFiles.size() > 1 || appArgs.blankPages > 0) {
@@ -617,19 +618,22 @@ public class App {
                 doc.close();
             }
 
-            for (int i = 0; i < appArgs.blankPages; ++i)
+            for (int i = 0; i < appArgs.blankPages; ++i) {
                 mergedDocument.addNewPage(mergedDocument.getDefaultPageSize());
+                documentModified = true;
+            }
 
             mergedDocument.close();
             ByteArrayInputStream inputStream = new ByteArrayInputStream(mergedOutputStream.toByteArray());
             mergedOutputStream.close();
             reader = new PdfReader(inputStream);
-            documentModified = maybeModified = true;
         } else {
             reader = getInputFileReader(0);
         }
 
-        {
+        if (appArgs.jsonOutput && appArgs.outputFile.equals("-"))
+            thepdf = new PdfDocument(reader);
+        else {
             java.io.OutputStream output;
             if (appArgs.outputFile.equals("-"))
                 output = System.out;
@@ -657,7 +661,7 @@ public class App {
                 .add("ok", true)
                 .add("at", (long) (System.currentTimeMillis() / 1000L))
                 .add("npages", numPages);
-            if (maybeModified)
+            if (appArgs.mayModify)
                 result.add("modified", documentModified);
             JsonArrayBuilder errfResult = Json.createArrayBuilder();
             for (int x = 0; x < 4; ++x)
