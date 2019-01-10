@@ -4,7 +4,6 @@ import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.font.PdfFont;
 import com.itextpdf.kernel.font.PdfFontFactory;
 import com.itextpdf.kernel.geom.Rectangle;
-import com.itextpdf.io.font.FontConstants;
 import com.itextpdf.io.font.FontProgram;
 import com.itextpdf.io.font.FontProgramFactory;
 import com.itextpdf.io.font.PdfEncodings;
@@ -56,8 +55,7 @@ import org.apache.commons.cli.HelpFormatter;
 
 
 public class App {
-    private PdfDocument reader = null;
-    private PdfDocument theStamper = null;
+    private PdfDocument thepdf = null;
     private AppArgs appArgs = null;
 
     private JsonArrayBuilder fmtErrors = Json.createArrayBuilder();
@@ -320,7 +318,7 @@ public class App {
         public int blankPages = 0;
         public boolean outputFileGiven = false;
         public String outputFile = "-";
-        public boolean onlyModified = false;
+        public int unmodifiedStatus = 0;
         public boolean jsonOutput = false;
         public boolean checkFonts = false;
         public boolean embedFonts = false;
@@ -348,7 +346,7 @@ public class App {
         Options options = new Options();
         options.addOption(Option.builder("o").longOpt("output").desc("write output PDF to FILE")
                           .hasArg(true).argName("FILE").build());
-        options.addOption(Option.builder().longOpt("only-modified").desc("only write output if modified").build());
+        options.addOption(Option.builder().longOpt("unmodified-status").desc("exit status if input unmodified").hasArg(true).argName("STATUS").build());
         options.addOption(Option.builder("j").longOpt("json").desc("write JSON output to stdout").build());
         options.addOption(Option.builder("F").longOpt("check-fonts").desc("check font embedding").build());
         options.addOption(Option.builder("J").longOpt("check-javascript").desc("check for JavaScript actions").build());
@@ -400,8 +398,8 @@ public class App {
                 appArgs.outputFileGiven = true;
                 appArgs.outputFile = cl.getOptionValue('o');
             }
-            if (cl.hasOption("only-modified"))
-                appArgs.onlyModified = true;
+            if (cl.hasOption("unmodified-status"))
+                appArgs.unmodifiedStatus = Integer.parseInt(cl.getOptionValue("unmodified-status"));
             if (cl.hasOption('j'))
                 appArgs.jsonOutput = true;
 
@@ -423,11 +421,15 @@ public class App {
                 || (appArgs.lefoot != null && appArgs.lefoot != "")
                 || (appArgs.lofoot != null && appArgs.lofoot != "")
                 || (appArgs.refoot != null && appArgs.refoot != "")
-                || (appArgs.rofoot != null && appArgs.rofoot != ""))
+                || (appArgs.rofoot != null && appArgs.rofoot != "")) {
                 appArgs.paginate = true;
-            else if (cl.hasOption('p')) {
+            } else if (cl.hasOption('p')) {
                 appArgs.cfoot = cl.hasOption("roman") ? "%r" : "%d";
                 appArgs.paginate = true;
+            }
+            if (appArgs.paginateFilePosition >= appArgs.inputFiles.size()) {
+                appArgs.paginateFilePosition = 0;
+                appArgs.paginate = false;
             }
             if (cl.hasOption('p'))
                 appArgs.firstPage = Integer.parseInt(cl.getOptionValue('p'));
@@ -544,63 +546,57 @@ public class App {
         }
     }
 
-    private PdfDocument getStamper() throws IOException {
-        if (theStamper == null) {
-            java.io.OutputStream output;
-            if (appArgs.outputFile.equals("-"))
-                output = System.out;
-            else
-                output = new FileOutputStream(appArgs.outputFile);
-            theStamper = new PdfDocument(reader.getReader(), new PdfWriter(output));
-        }
-        return theStamper;
+    private PdfReader getInputFileReader(int filePos) throws IOException {
+        if (appArgs.inputFiles.get(filePos).equals("="))
+            return new PdfReader(System.in);
+        else
+            return new PdfReader(appArgs.inputFiles.get(filePos));
     }
 
     public void runMain(String[] args) throws IOException, NumberFormatException {
         appArgs = parseArgs(args);
 
+        boolean maybeModified = appArgs.paginate || appArgs.strip || appArgs.embedFonts;
+
         // read and merge files
-        ByteArrayOutputStream mergedOutputStream = null;
-        PdfDocument mergedDocument = null;
-        PdfMerger mergedCopy = null;
+        PdfReader reader;
         if (appArgs.inputFiles.size() > 1 || appArgs.blankPages > 0) {
-            mergedOutputStream = new ByteArrayOutputStream();
-            mergedDocument = new PdfDocument(new PdfWriter(mergedOutputStream));
-            mergedCopy = new PdfMerger(mergedDocument);
-        }
+            ByteArrayOutputStream mergedOutputStream = new ByteArrayOutputStream();
+            PdfDocument mergedDocument = new PdfDocument(new PdfWriter(mergedOutputStream));
+            PdfMerger mergedCopy = new PdfMerger(mergedDocument);
 
-        int pageCount = 0;
-        for (int filePos = 0; filePos < appArgs.inputFiles.size(); ++filePos) {
-            PdfReader r;
-            if (appArgs.inputFiles.get(filePos).equals("-"))
-                r = new PdfReader(System.in);
-            else
-                r = new PdfReader(appArgs.inputFiles.get(filePos));
-            PdfDocument doc = new PdfDocument(r);
-
-            pageCount += doc.getNumberOfPages();
-            if (filePos + 1 == appArgs.paginateFilePosition && appArgs.skipPagination < 0)
-                appArgs.skipPagination = pageCount;
-
-            if (mergedCopy != null) {
+            int pageCount = 0;
+            for (int filePos = 0; filePos < appArgs.inputFiles.size(); ++filePos) {
+                PdfDocument doc = new PdfDocument(getInputFileReader(filePos));
+                pageCount += doc.getNumberOfPages();
+                if (filePos + 1 == appArgs.paginateFilePosition
+                    && appArgs.skipPagination < 0)
+                    appArgs.skipPagination = pageCount;
                 if (filePos == 0)
                     mergedDocument.setDefaultPageSize(doc.getDefaultPageSize());
                 mergedCopy.merge(doc, 1, doc.getNumberOfPages());
                 doc.close();
-            } else
-                reader = doc;
-        }
+            }
 
-        for (int i = 0; i < appArgs.blankPages; ++i)
-            mergedDocument.addNewPage(mergedDocument.getDefaultPageSize());
+            for (int i = 0; i < appArgs.blankPages; ++i)
+                mergedDocument.addNewPage(mergedDocument.getDefaultPageSize());
 
-        if (mergedCopy != null) {
             mergedDocument.close();
             ByteArrayInputStream inputStream = new ByteArrayInputStream(mergedOutputStream.toByteArray());
             mergedOutputStream.close();
-            reader = new PdfDocument(new PdfReader(inputStream));
-            getStamper();
-            documentModified = true;
+            reader = new PdfReader(inputStream);
+            documentModified = maybeModified = true;
+        } else {
+            reader = getInputFileReader(0);
+        }
+
+        {
+            java.io.OutputStream output;
+            if (appArgs.outputFile.equals("-"))
+                output = System.out;
+            else
+                output = new FileOutputStream(appArgs.outputFile);
+            thepdf = new PdfDocument(reader, new PdfWriter(output));
         }
 
         // actions
@@ -614,18 +610,13 @@ public class App {
             paginate();
 
         // output
-        boolean maybeModified = appArgs.paginate || appArgs.strip || appArgs.embedFonts
-            || mergedCopy != null || appArgs.outputFileGiven;
-        if (maybeModified && !appArgs.onlyModified)
-            getStamper();
-        if (theStamper != null)
-            theStamper.close();
-        int numPages = reader.getNumberOfPages();
-        reader.close();
+        int numPages = thepdf.getNumberOfPages();
+        thepdf.close();
 
         if (appArgs.jsonOutput) {
             JsonObjectBuilder result = Json.createObjectBuilder()
-                .add("ok", true).add("at", (long) (System.currentTimeMillis() / 1000L))
+                .add("ok", true)
+                .add("at", (long) (System.currentTimeMillis() / 1000L))
                 .add("npages", numPages);
             if (maybeModified)
                 result.add("modified", documentModified);
@@ -645,7 +636,12 @@ public class App {
             out.println(stWriter.toString());
         }
 
-        System.exit(errorTypes == 0 ? 0 : 1);
+        if (errorTypes != 0)
+            System.exit(1);
+        else if (!documentModified)
+            System.exit(appArgs.unmodifiedStatus);
+        else
+            System.exit(0);
     }
 
     static final private String romanNumeralOut[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
@@ -717,7 +713,7 @@ public class App {
             appArgs.footerFont = lookupEmbedFont("Times-Roman").getBaseFont();
         int firstLocalPage = 1 + Math.max(appArgs.skipPagination, 0);
 
-        for (int p = firstLocalPage; p <= reader.getNumberOfPages() - appArgs.blankPages; ++p) {
+        for (int p = firstLocalPage; p <= thepdf.getNumberOfPages() - appArgs.blankPages; ++p) {
             int pageno = appArgs.firstPage + p - firstLocalPage;
             boolean flipped = appArgs.twoSided && pageno % 2 == 0;
             String lfoot = pageno % 2 == 0 ? appArgs.lefoot : appArgs.lofoot;
@@ -726,25 +722,25 @@ public class App {
             String rfoot = pageno % 2 == 0 ? appArgs.refoot : appArgs.rofoot;
             if (rfoot == null)
                 rfoot = flipped ? appArgs.lfoot : appArgs.rfoot;
-            Rectangle pagebox = reader.getPage(p).getPageSize();
+            Rectangle pagebox = thepdf.getPage(p).getPageSize();
             float lx = pagebox.getLeft() + (flipped ? appArgs.rmargin : appArgs.lmargin);
             float rx = pagebox.getRight() - (flipped ? appArgs.lmargin : appArgs.rmargin);
             float by = pagebox.getBottom() + appArgs.bmargin;
-            PdfCanvas cb = new PdfCanvas(getStamper().getPage(p));
+            PdfCanvas cb = new PdfCanvas(thepdf, p);
             cb.setFontAndSize(appArgs.footerFont, appArgs.footerSize);
             if (lfoot != "") {
                 Paragraph text = new Paragraph(expandFooter(lfoot, pageno));
-                new Canvas(cb, getStamper(), pagebox)
+                new Canvas(cb, thepdf, pagebox)
                     .showTextAligned(text, lx, by, p, TextAlignment.LEFT, VerticalAlignment.BOTTOM, 0);
             }
             if (appArgs.cfoot != "") {
                 Paragraph text = new Paragraph(expandFooter(appArgs.cfoot, pageno));
-                new Canvas(cb, getStamper(), pagebox)
+                new Canvas(cb, thepdf, pagebox)
                     .showTextAligned(text, (lx + rx) / 2, by, p, TextAlignment.CENTER, VerticalAlignment.BOTTOM, 0);
             }
             if (rfoot != "") {
                 Paragraph text = new Paragraph(expandFooter(rfoot, pageno));
-                new Canvas(cb, getStamper(), pagebox)
+                new Canvas(cb, thepdf, pagebox)
                     .showTextAligned(text, rx, by, p, TextAlignment.RIGHT, VerticalAlignment.BOTTOM, 0);
             }
             if (appArgs.footerRuleWidth > 0.0) {
@@ -760,8 +756,8 @@ public class App {
 
     public void checkFonts() throws IOException {
         // parsing/traversing borrowed from `poppler/util/pdffonts`
-        for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
-            PdfDictionary page = reader.getPage(p).getPdfObject();
+        for (int p = 1; p <= thepdf.getNumberOfPages(); ++p) {
+            PdfDictionary page = thepdf.getPage(p).getPdfObject();
             PdfDictionary res = page.getAsDictionary(PdfName.Resources);
             checkFontsDict(p, res);
             PdfArray annots = page.getAsArray(PdfName.Annots);
@@ -916,7 +912,7 @@ public class App {
         if (embedFont.descriptorReference == null) {
             try {
                 PdfDictionary newDescriptor = embedFont.getFontDescriptor(baseFont);
-                embedFont.descriptorReference = newDescriptor.makeIndirect(getStamper()).getIndirectReference();
+                embedFont.descriptorReference = newDescriptor.makeIndirect(thepdf).getIndirectReference();
             } catch (Throwable e) {
                 return false;
             }
@@ -942,7 +938,7 @@ public class App {
             try {
                 font.put(PdfName.FirstChar, new PdfNumber(firstChar));
                 font.put(PdfName.LastChar, new PdfNumber(lastChar));
-                font.put(PdfName.Widths, widths.makeIndirect(getStamper()).getIndirectReference());
+                font.put(PdfName.Widths, widths.makeIndirect(thepdf).getIndirectReference());
             } catch (Throwable e) {
                 return false;
             }
@@ -1022,7 +1018,7 @@ public class App {
     }
 
     public void checkJavascripts(boolean strip) throws IOException {
-        PdfDictionary doccatalog = reader.getCatalog().getPdfObject();
+        PdfDictionary doccatalog = thepdf.getCatalog().getPdfObject();
         PdfDictionary aa = doccatalog.getAsDictionary(PdfName.AA);
         if (aa != null)
             checkJavascripts(aa, strip, " at document level");
@@ -1040,8 +1036,8 @@ public class App {
                 checkFormFieldJavascripts(fields.getAsDictionary(j), strip);
         }
 
-        for (int p = 1; p <= reader.getNumberOfPages(); ++p) {
-            PdfDictionary page = reader.getPage(p).getPdfObject();
+        for (int p = 1; p <= thepdf.getNumberOfPages(); ++p) {
+            PdfDictionary page = thepdf.getPage(p).getPdfObject();
             aa = page.getAsDictionary(PdfName.AA);
             if (aa != null)
                 checkJavascripts(aa, strip, " on page " + p);
@@ -1090,7 +1086,7 @@ public class App {
     }
 
     public void checkAnonymity(boolean strip) {
-        PdfDictionary trailer = reader.getTrailer();
+        PdfDictionary trailer = thepdf.getTrailer();
         PdfDictionary info = trailer != null ? trailer.getAsDictionary(PdfName.Info) : null;
         PdfString author = null;
         if (info != null)
