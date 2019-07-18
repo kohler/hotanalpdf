@@ -51,6 +51,6 @@ HotAnalPDF is distributed under the
 [GNU Affero General Public License, version 3][license], in accordance with iText.
 
 [HotCRP]: https://hotcrp.com/
-[Maven]: https://maven.apache.org/
+[Apache Maven]: https://maven.apache.org/
 [iText 7]: https://itextpdf.com/
 [license]: https://www.gnu.org/licenses/agpl-3.0.en.html
