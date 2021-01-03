@@ -7,8 +7,11 @@ import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.io.font.FontProgram;
 import com.itextpdf.io.font.FontProgramFactory;
 import com.itextpdf.io.font.PdfEncodings;
+import com.itextpdf.io.image.ImageData;
+import com.itextpdf.io.image.ImageDataFactory;
 import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
 import com.itextpdf.layout.Canvas;
+import com.itextpdf.layout.element.Image;
 import com.itextpdf.layout.element.Paragraph;
 import com.itextpdf.layout.property.TextAlignment;
 import com.itextpdf.layout.property.VerticalAlignment;
@@ -37,10 +40,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.io.StringWriter;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.Vector;
 import javax.json.Json;
 import javax.json.JsonObject;
 import javax.json.JsonArrayBuilder;
@@ -315,6 +318,35 @@ public class App {
     public final int ERR_ANONYMITY = 8;
     public final String errfNameMap[] = {null, "fonttype", "fontembed", null, "javascript", null, null, null, "authormeta"};
 
+    static public class AppImageArg {
+        public int pageno = 1;
+        public float x = 0;
+        public boolean negX = false;
+        public float y = 0;
+        public boolean negY = false;
+        public float width = 0;
+        public boolean hasWidth = false;
+        public float height = 0;
+        public boolean hasHeight = false;
+        public boolean exactScale = false;
+        public String filename = null;
+
+        public void scalePosition(Image image, Rectangle pagebox) {
+            if (hasWidth || hasHeight) {
+                float rw = hasWidth ? width : image.getImageWidth();
+                float rh = hasHeight ? height : image.getImageHeight();
+                if (exactScale) {
+                    image.scaleAbsolute(rw, rh);
+                } else {
+                    image.scaleToFit(rw, rh);
+                }
+            }
+            float rx = negX ? pagebox.getWidth() - x - image.getImageScaledWidth() : x;
+            float ry = negY ? pagebox.getHeight() - y - image.getImageScaledHeight() : y;
+            image.setFixedPosition(rx, ry);
+        }
+    }
+
     static public class AppArgs {
         public boolean paginate = false;
         public int firstPage = 0;
@@ -335,7 +367,7 @@ public class App {
         public float bmargin = 28;
         public float footerRulePosition = 0;
         public float footerRuleWidth = 0;
-        public Vector<String> inputFiles = new Vector<String>();
+        public ArrayList<String> inputFiles = new ArrayList<String>();
         public int paginateFilePosition = -1;
         public int blankPages = 0;
         public boolean outputFileGiven = false;
@@ -348,6 +380,7 @@ public class App {
         public boolean checkAnonymity = false;
         public boolean strip = false;
         public boolean mayModify = false;
+        public ArrayList<AppImageArg> images = new ArrayList<AppImageArg>();
 
         private boolean defaultPaginate = false;
         private boolean paginateRoman = false;
@@ -444,6 +477,50 @@ public class App {
                 this.bmargin = Float.parseFloat(opt.getValue());
                 break;
 
+            case "I": {
+                AppImageArg iarg = new AppImageArg();
+                String s = opt.getValues()[0];
+                int at = s.indexOf('@');
+                if (at >= 0) {
+                    iarg.pageno = Integer.parseInt(s.substring(at + 1));
+                    s = s.substring(0, at);
+                } else if (images.size() > 0) {
+                    iarg.pageno = images.get(images.size() - 1).pageno;
+                }
+                if (s.charAt(s.length() - 1) == '!') {
+                    iarg.exactScale = true;
+                    s = s.substring(0, s.length() - 1);
+                }
+                int comma = s.indexOf(',');
+                if (comma < 0) {
+                    throw new NumberFormatException();
+                }
+                iarg.negX = s.charAt(0) == '-';
+                iarg.x = Float.parseFloat(s.substring(0, comma));
+                iarg.negY = s.charAt(comma + 1) == '-';
+                int plus = s.indexOf('+', comma + 2);
+                if (plus < 0) {
+                    iarg.y = Float.parseFloat(s.substring(comma + 1));
+                } else {
+                    iarg.y = Float.parseFloat(s.substring(comma + 1, plus));
+                    int ex = s.indexOf('x', plus + 1);
+                    if (ex < 0) {
+                        ex = s.length();
+                    }
+                    if (plus < ex - 1) {
+                        iarg.width = Float.parseFloat(s.substring(plus + 1, ex));
+                        iarg.hasWidth = true;
+                    }
+                    if (ex < s.length() - 1) {
+                        iarg.height = Float.parseFloat(s.substring(ex + 1));
+                        iarg.hasHeight = true;
+                    }
+                }
+                iarg.filename = opt.getValues()[1];
+                this.images.add(iarg);
+                break;
+            }
+
             case "F":
                 this.checkFonts = true;
                 break;
@@ -477,7 +554,8 @@ public class App {
             this.mayModify = this.paginate
                 || this.strip
                 || this.embedFonts
-                || this.blankPages > 0;
+                || this.blankPages > 0
+                || this.images.size() > 0;
             if (this.mayModify
                 && this.jsonOutput
                 && this.outputFile.equals("-")) {
@@ -539,6 +617,7 @@ public class App {
         options.addOption(Option.builder().longOpt("append-blank").desc("add N blank pages at end")
                           .hasArg(true).argName("N").build());
         options.addOption(Option.builder().longOpt("add-blank").hasArg(true).argName("N").build());
+        options.addOption(Option.builder("I").longOpt("image").numberOfArgs(2).argName("POS IMAGE").desc("add image to page").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
         int status = 0;
 
@@ -550,14 +629,14 @@ public class App {
                 if (cl.getArgs()[i].equals("@")) {
                     appArgs.paginateFilePosition = appArgs.inputFiles.size();
                 } else {
-                    appArgs.inputFiles.addElement(cl.getArgs()[i]);
+                    appArgs.inputFiles.add(cl.getArgs()[i]);
                 }
             }
             if (appArgs.paginateFilePosition < 0) {
                 appArgs.paginateFilePosition = 0;
             }
             if (appArgs.inputFiles.size() == 0) {
-                appArgs.inputFiles.addElement("-");
+                appArgs.inputFiles.add("-");
             }
 
             for (Option o : cl.getOptions()) {
@@ -740,6 +819,9 @@ public class App {
         if (appArgs.paginate) {
             paginate();
         }
+        if (appArgs.images.size() > 0) {
+            addImages();
+        }
 
         // output
         int numPages = thepdf.getNumberOfPages();
@@ -897,6 +979,28 @@ public class App {
                 cb.fill();
                 cb.restoreState();
             }
+            documentModified = true;
+        }
+    }
+
+    public void addImages() throws IOException {
+        int lastPageno = -1;
+        Rectangle pagebox = null;
+        PdfCanvas lastCanvas = null;
+        for (AppImageArg a : appArgs.images) {
+            if (a.pageno <= 0 || a.pageno > thepdf.getNumberOfPages()) {
+                continue;
+            }
+            if (a.pageno != lastPageno) {
+                lastPageno = a.pageno;
+                PdfPage page = thepdf.getPage(a.pageno);
+                pagebox = page.getPageSize();
+                lastCanvas = new PdfCanvas(page.newContentStreamBefore(), page.getResources(), thepdf);
+            }
+            ImageData imageData = ImageDataFactory.create(a.filename);
+            Image image = new Image(imageData);
+            a.scalePosition(image, pagebox);
+            new Canvas(lastCanvas, pagebox).add(image);
             documentModified = true;
         }
     }
