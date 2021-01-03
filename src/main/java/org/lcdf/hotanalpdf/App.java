@@ -152,30 +152,39 @@ public class App {
                 String result = IOUtils.toString(p.getInputStream(), "UTF-8").trim();
                 error = IOUtils.toString(p.getErrorStream(), "UTF-8").trim();
                 p.destroy();
-                if (error != "" && error.indexOf("remove_dots") >= 0 && !kpsewhichChecked)
+                if (error != ""
+                    && error.indexOf("remove_dots") >= 0
+                    && !kpsewhichChecked) {
                     throw new IOException();
-                if (result != "" && new java.io.File(result).exists())
+                } else if (result != ""
+                           && new java.io.File(result).exists()) {
                     return result;
+                }
             } catch (IOException e) {
                 if (!kpsewhichChecked) {
                     kpsewhichChecked = true;
-                    if (new java.io.File("/usr/bin/kpsewhich").exists())
+                    if (new java.io.File("/usr/bin/kpsewhich").exists()) {
                         kpsewhich = "/usr/bin/kpsewhich";
-                    else if (new java.io.File("/usr/local/bin/kpsewhich").exists())
+                    } else if (new java.io.File("/usr/local/bin/kpsewhich").exists()) {
                         kpsewhich = "/usr/local/bin/kpsewhich";
-                    else if (new java.io.File("/opt/local/bin/kpsewhich").exists())
+                    } else if (new java.io.File("/opt/local/bin/kpsewhich").exists()) {
                         kpsewhich = "/opt/local/bin/kpsewhich";
-                    if (!kpsewhich.equals("kpsewhich"))
+                    }
+                    if (!kpsewhich.equals("kpsewhich")) {
                         return findFile(prefix, suffix);
+                    }
                 }
                 System.err.println(e.toString());
             }
             int i = prefix.lastIndexOf('-');
-            if (i >= 0)
+            if (i >= 0) {
                 return findFile(prefix.substring(0, i), suffix);
-            if (error != "")
-                System.err.println(error);
-            return null;
+            } else {
+                if (error != "") {
+                    System.err.println(error);
+                }
+                return null;
+            }
         }
     }
 
@@ -187,15 +196,16 @@ public class App {
 
         public AnalEncoding copy() {
             AnalEncoding c = new AnalEncoding();
-            for (int i = 0; i < 256; ++i)
+            for (int i = 0; i < 256; ++i) {
                 c.encoding[i] = this.encoding[i];
+            }
             return c;
         }
         public String unparseItext() {
             makeUnicodeMap();
             StringBuffer buffer = new StringBuffer(1024);
             buffer.append("# full");
-            for (int i = 0; i < 256; ++i)
+            for (int i = 0; i < 256; ++i) {
                 if (encoding[i] != null && !encoding[i].equals(".notdef")) {
                     buffer.append(" ");
                     buffer.append(i);
@@ -204,6 +214,7 @@ public class App {
                     buffer.append(" ");
                     buffer.append(String.format("%04X", unicodeMap.get(encoding[i])));
                 }
+            }
             return buffer.toString();
         }
 
@@ -221,8 +232,9 @@ public class App {
                     String line = null;
                     while ((line = br.readLine()) != null) {
                         String[] words = line.split("\\s+");
-                        if (words.length >= 2)
+                        if (words.length >= 2) {
                             unicodeMap.put(words[0], Integer.parseInt(words[1], 16));
+                        }
                     }
                     stream.close();
                 } catch (Throwable e) {
@@ -239,8 +251,9 @@ public class App {
                     String line = null;
                     while ((line = br.readLine()) != null) {
                         String[] words = line.split("\\s+");
-                        if (words.length >= 3)
+                        if (words.length >= 3) {
                             encoding.encoding[Integer.parseInt(words[0], 10)] = words[1];
+                        }
                     }
                     stream.close();
                 } catch (Throwable e) {
@@ -251,39 +264,45 @@ public class App {
         }
         static private AnalEncoding getBasePdfEncoding(PdfDictionary font) {
             String fontNameStr = font.getAsName(PdfName.BaseFont).toString();
-            if (fontNameStr == "/Symbol")
+            if (fontNameStr == "/Symbol") {
                 return getEncoding("SymbolEncoding");
-            else if (fontNameStr == "/ZapfDingbats")
+            } else if (fontNameStr == "/ZapfDingbats") {
                 return getEncoding("ZapfDingbatsEncoding");
-            else
+            } else {
                 return getEncoding("StandardEncoding");
+            }
         }
         static public AnalEncoding getPdfEncoding(PdfDictionary font) {
             PdfObject encodingObj = font.get(PdfName.Encoding);
-            if (encodingObj != null && encodingObj.isName())
+            if (encodingObj != null
+                && encodingObj.isName()) {
                 return getEncoding(((PdfName) encodingObj).toString().substring(1));
-            else if (encodingObj != null && (encodingObj.isDictionary() || encodingObj.isIndirectReference())) {
+            } else if (encodingObj != null
+                       && (encodingObj.isDictionary() || encodingObj.isIndirectReference())) {
                 PdfDictionary encodingDict = font.getAsDictionary(PdfName.Encoding);
                 PdfName base = encodingDict.getAsName(PdfName.BaseEncoding);
                 AnalEncoding e;
-                if (base != null)
+                if (base != null) {
                     e = getEncoding(base.toString().substring(1)).copy();
-                else
+                } else {
                     e = getBasePdfEncoding(font).copy();
+                }
                 PdfArray differences = encodingDict.getAsArray(PdfName.Differences);
                 if (differences != null) {
                     int nextCode = -1;
-                    for (int i = 0; i < differences.size(); ++i)
-                        if (differences.get(i).isNumber())
+                    for (int i = 0; i < differences.size(); ++i) {
+                        if (differences.get(i).isNumber()) {
                             nextCode = differences.getAsNumber(i).intValue();
-                        else if (nextCode >= 0 && nextCode < 256) {
+                        } else if (nextCode >= 0 && nextCode < 256) {
                             e.encoding[nextCode] = differences.getAsName(i).getValue();
                             ++nextCode;
                         }
+                    }
                 }
                 return e;
-            } else
+            } else {
                 return getBasePdfEncoding(font);
+            }
         }
     }
 
@@ -310,6 +329,7 @@ public class App {
         public String rofoot = null;
         public boolean twoSided = false;
         public PdfFont footerFont = null;
+        public String footerFontName = null;
         public float lmargin = 54;
         public float rmargin = 54;
         public float bmargin = 28;
@@ -328,6 +348,143 @@ public class App {
         public boolean checkAnonymity = false;
         public boolean strip = false;
         public boolean mayModify = false;
+
+        private boolean defaultPaginate = false;
+        private boolean paginateRoman = false;
+
+        public void apply(Option opt, CommandLine cl) {
+            switch (opt.getOpt()) {
+            case "o":
+                this.outputFileGiven = true;
+                this.outputFile = opt.getValue();
+                break;
+            case "unmodified-status":
+                this.unmodifiedStatus = Integer.parseInt(opt.getValue());
+                break;
+            case "j":
+                this.jsonOutput = true;
+                break;
+
+            case "p":
+                this.firstPage = Integer.parseInt(opt.getValue());
+                this.defaultPaginate = true;
+                break;
+            case "roman":
+                this.paginateRoman = true;
+                break;
+            case "two-sided":
+                this.twoSided = true;
+                break;
+            case "lfoot":
+                this.lfoot = opt.getValue();
+                this.paginate = this.paginate || this.lfoot != "";
+                break;
+            case "cfoot":
+                this.cfoot = opt.getValue();
+                this.paginate = this.paginate || this.cfoot != "";
+                break;
+            case "rfoot":
+                this.rfoot = opt.getValue();
+                this.paginate = this.paginate || this.rfoot != "";
+                break;
+            case "lefoot":
+                this.lefoot = opt.getValue();
+                this.paginate = this.paginate || this.lefoot != "";
+                break;
+            case "lofoot":
+                this.lofoot = opt.getValue();
+                this.paginate = this.paginate || this.lofoot != "";
+                break;
+            case "refoot":
+                this.refoot = opt.getValue();
+                this.paginate = this.paginate || this.refoot != "";
+                break;
+            case "rofoot":
+                this.rofoot = opt.getValue();
+                this.paginate = this.paginate || this.rofoot != "";
+                break;
+            case "footer-font":
+                this.footerFontName = opt.getValue();
+                break;
+            case "footer-size":
+                this.footerSize = Integer.parseInt(opt.getValue());
+                break;
+            case "footer-rule": {
+                String s = opt.getValue();
+                int comma = s.indexOf(',');
+                if (comma >= 0) {
+                    this.footerRulePosition = Float.parseFloat(s.substring(0, comma));
+                    this.footerRuleWidth = Float.parseFloat(s.substring(comma + 1));
+                } else {
+                    this.footerRulePosition = Float.parseFloat(s);
+                    this.footerRuleWidth = 1;
+                }
+                this.paginate = this.paginate || this.footerRuleWidth > 0;
+                break;
+            }
+            case "skip-pagination":
+                this.skipPagination = Integer.parseInt(opt.getValue());
+                break;
+
+            case "append-blank":
+            case "add-blank":
+                this.blankPages = Integer.parseInt(opt.getValue());
+                if (this.blankPages < 0) {
+                    throw new NumberFormatException();
+                }
+                break;
+
+            case "lmargin":
+                this.lmargin = Float.parseFloat(opt.getValue());
+                break;
+            case "rmargin":
+                this.rmargin = Float.parseFloat(opt.getValue());
+                break;
+            case "bmargin":
+                this.bmargin = Float.parseFloat(opt.getValue());
+                break;
+
+            case "F":
+                this.checkFonts = true;
+                break;
+            case "embed-fonts":
+                this.embedFonts = true;
+                break;
+            case "J":
+                this.checkJS = true;
+                break;
+            case "A":
+                this.checkAnonymity = true;
+                break;
+            case "s":
+                this.strip = true;
+                break;
+            }
+        }
+
+        public void crosscheck() {
+            if (this.paginateFilePosition >= this.inputFiles.size()) {
+                this.paginateFilePosition = 0;
+                this.paginate = false;
+            } else if (!this.paginate && this.defaultPaginate) {
+                this.cfoot = this.paginateRoman ? "%r" : "%d";
+                this.paginate = true;
+            }
+            if (this.strip && !this.checkJS && !this.checkAnonymity) {
+                System.err.println("`--strip` requires `--js` or `--anonymity`");
+                throw new NumberFormatException();
+            }
+            this.mayModify = this.paginate
+                || this.strip
+                || this.embedFonts
+                || this.blankPages > 0;
+            if (this.mayModify
+                && this.jsonOutput
+                && this.outputFile.equals("-")) {
+                System.err.println("`--json` plus modification options requires output file");
+                throw new NumberFormatException();
+            }
+        }
     }
 
     public static void main(String[] args) throws IOException, NumberFormatException, ParseException {
@@ -338,10 +495,11 @@ public class App {
         errorTypes |= errorType;
         if (!fmtErrorsGiven.contains(error)) {
             fmtErrorsGiven.add(error);
-            if (appArgs.jsonOutput)
+            if (appArgs.jsonOutput) {
                 fmtErrors.add(Json.createArrayBuilder().add(errfNameMap[errorType]).add(error).build());
-            else
+            } else {
                 System.err.println(error);
+            }
         }
     }
 
@@ -378,8 +536,9 @@ public class App {
                           .hasArg(true).argName("").build());
         options.addOption(Option.builder().longOpt("skip-pagination").desc("don't paginate first N pages")
                           .hasArg(true).argName("N").build());
-        options.addOption(Option.builder().longOpt("add-blank").desc("add N blank pages at end")
+        options.addOption(Option.builder().longOpt("append-blank").desc("add N blank pages at end")
                           .hasArg(true).argName("N").build());
+        options.addOption(Option.builder().longOpt("add-blank").hasArg(true).argName("N").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
         int status = 0;
 
@@ -388,112 +547,31 @@ public class App {
             AppArgs appArgs = new AppArgs();
 
             for (int i = 0; i < cl.getArgs().length; ++i) {
-                if (cl.getArgs()[i].equals("@"))
+                if (cl.getArgs()[i].equals("@")) {
                     appArgs.paginateFilePosition = appArgs.inputFiles.size();
-                else
-                    appArgs.inputFiles.addElement(cl.getArgs()[i]);
-            }
-            if (appArgs.paginateFilePosition < 0)
-                appArgs.paginateFilePosition = 0;
-            if (appArgs.inputFiles.size() == 0)
-                appArgs.inputFiles.addElement("-");
-            if (cl.hasOption('o')) {
-                appArgs.outputFileGiven = true;
-                appArgs.outputFile = cl.getOptionValue('o');
-            }
-            if (cl.hasOption("unmodified-status"))
-                appArgs.unmodifiedStatus = Integer.parseInt(cl.getOptionValue("unmodified-status"));
-            if (cl.hasOption('j'))
-                appArgs.jsonOutput = true;
-
-            if (cl.hasOption("lfoot"))
-                appArgs.lfoot = cl.getOptionValue("lfoot");
-            if (cl.hasOption("cfoot"))
-                appArgs.cfoot = cl.getOptionValue("cfoot");
-            if (cl.hasOption("rfoot"))
-                appArgs.rfoot = cl.getOptionValue("rfoot");
-            if (cl.hasOption("lefoot"))
-                appArgs.lefoot = cl.getOptionValue("lefoot");
-            if (cl.hasOption("lofoot"))
-                appArgs.lofoot = cl.getOptionValue("lofoot");
-            if (cl.hasOption("refoot"))
-                appArgs.refoot = cl.getOptionValue("refoot");
-            if (cl.hasOption("rofoot"))
-                appArgs.rofoot = cl.getOptionValue("rofoot");
-            if (appArgs.lfoot != "" || appArgs.cfoot != "" || appArgs.rfoot != ""
-                || (appArgs.lefoot != null && appArgs.lefoot != "")
-                || (appArgs.lofoot != null && appArgs.lofoot != "")
-                || (appArgs.refoot != null && appArgs.refoot != "")
-                || (appArgs.rofoot != null && appArgs.rofoot != "")) {
-                appArgs.paginate = true;
-            } else if (cl.hasOption('p')) {
-                appArgs.cfoot = cl.hasOption("roman") ? "%r" : "%d";
-                appArgs.paginate = true;
-            }
-            if (appArgs.paginateFilePosition >= appArgs.inputFiles.size()) {
-                appArgs.paginateFilePosition = 0;
-                appArgs.paginate = false;
-            }
-            if (cl.hasOption('p'))
-                appArgs.firstPage = Integer.parseInt(cl.getOptionValue('p'));
-            if (cl.hasOption("footer-font"))
-                setFooterFont(appArgs, cl.getOptionValue("footer-font"));
-            if (cl.hasOption("footer-size"))
-                appArgs.footerSize = Integer.parseInt(cl.getOptionValue("footer-size"));
-            if (cl.hasOption("footer-rule")) {
-                String s = cl.getOptionValue("footer-rule");
-                int comma = s.indexOf(',');
-                if (comma >= 0) {
-                    appArgs.footerRulePosition = Float.parseFloat(s.substring(0, comma));
-                    appArgs.footerRuleWidth = Float.parseFloat(s.substring(comma + 1));
                 } else {
-                    appArgs.footerRulePosition = Float.parseFloat(s);
-                    appArgs.footerRuleWidth = 1;
+                    appArgs.inputFiles.addElement(cl.getArgs()[i]);
                 }
-                if (appArgs.footerRuleWidth > 0)
-                    appArgs.paginate = true;
             }
-            if (cl.hasOption("skip-pagination"))
-                appArgs.skipPagination = Integer.parseInt(cl.getOptionValue("skip-pagination"));
-
-            if (cl.hasOption("lmargin"))
-                appArgs.lmargin = Float.parseFloat(cl.getOptionValue("lmargin"));
-            if (cl.hasOption("rmargin"))
-                appArgs.rmargin = Float.parseFloat(cl.getOptionValue("rmargin"));
-            if (cl.hasOption("bmargin"))
-                appArgs.bmargin = Float.parseFloat(cl.getOptionValue("bmargin"));
-            if (cl.hasOption("two-sided"))
-                appArgs.twoSided = true;
-
-            if (cl.hasOption("add-blank")) {
-                appArgs.blankPages = Integer.parseInt(cl.getOptionValue("add-blank"));
-                if (appArgs.blankPages < 0)
-                    throw new NumberFormatException();
+            if (appArgs.paginateFilePosition < 0) {
+                appArgs.paginateFilePosition = 0;
+            }
+            if (appArgs.inputFiles.size() == 0) {
+                appArgs.inputFiles.addElement("-");
             }
 
-            if (cl.hasOption('F'))
-                appArgs.checkFonts = true;
-            if (cl.hasOption("embed-fonts"))
-                appArgs.embedFonts = true;
-            if (cl.hasOption('J'))
-                appArgs.checkJS = true;
-            if (cl.hasOption('A'))
-                appArgs.checkAnonymity = true;
-            if (cl.hasOption('s'))
-                appArgs.strip = true;
+            for (Option o : cl.getOptions()) {
+                appArgs.apply(o, cl);
+            }
 
-            if (appArgs.strip && !appArgs.checkJS && !appArgs.checkAnonymity) {
-                System.err.println("`--strip` requires `--js` or `--anonymity`");
-                throw new NumberFormatException();
+            if (appArgs.footerFontName != null) {
+                setFooterFont(appArgs, appArgs.footerFontName);
             }
-            appArgs.mayModify = appArgs.paginate || appArgs.strip || appArgs.embedFonts
-                || appArgs.blankPages > 0;
-            if (appArgs.mayModify && appArgs.jsonOutput && appArgs.outputFile.equals("-")) {
-                System.err.println("`--json` plus modification options requires output file");
-                throw new NumberFormatException();
-            }
-            if (!cl.hasOption("help"))
+            appArgs.crosscheck();
+
+            if (!cl.hasOption("help")) {
                 return appArgs;
+            }
         } catch (Throwable e) {
             status = 1;
         }
@@ -557,26 +635,29 @@ public class App {
                 @Override
                 public int compare(PageSize e1, PageSize e2) {
                     if (e1.getWidth() < e2.getWidth()
-                        || (e1.getWidth() == e2.getWidth() && e1.getHeight() < e2.getHeight()))
+                        || (e1.getWidth() == e2.getWidth() && e1.getHeight() < e2.getHeight())) {
                         return -1;
-                    else if (e1.getWidth() == e2.getWidth() && e1.getHeight() == e2.getHeight())
+                    } else if (e1.getWidth() == e2.getWidth() && e1.getHeight() == e2.getHeight()) {
                         return 0;
-                    else
+                    } else {
                         return 1;
+                    }
                 }
             }
         );
         for (int p = 1; p <= doc.getNumberOfPages(); ++p) {
             PageSize thisPageSize = new PageSize(doc.getPage(p).getPageSize());
             Integer n = pageSizeMap.get(thisPageSize);
-            if (n == null)
+            if (n == null) {
                 pageSizeMap.put(thisPageSize, 1);
-            else
+            } else {
                 pageSizeMap.put(thisPageSize, n + 1);
+            }
         }
         if (pageSizeMap.isEmpty()
-            || pageSizeMap.containsKey(doc.getDefaultPageSize()))
+            || pageSizeMap.containsKey(doc.getDefaultPageSize())) {
             return doc.getDefaultPageSize();
+        }
         PageSize pageSize = null;
         int count = 0;
         for (Map.Entry<PageSize, Integer> entry : pageSizeMap.entrySet()) {
@@ -589,10 +670,11 @@ public class App {
     }
 
     private PdfReader getInputFileReader(int filePos) throws IOException {
-        if (appArgs.inputFiles.get(filePos).equals("-"))
+        if (appArgs.inputFiles.get(filePos).equals("-")) {
             return new PdfReader(System.in);
-        else
+        } else {
             return new PdfReader(appArgs.inputFiles.get(filePos));
+        }
     }
 
     public void runMain(String[] args) throws IOException, NumberFormatException {
@@ -610,10 +692,12 @@ public class App {
                 PdfDocument doc = new PdfDocument(getInputFileReader(filePos));
                 pageCount += doc.getNumberOfPages();
                 if (filePos + 1 == appArgs.paginateFilePosition
-                    && appArgs.skipPagination < 0)
+                    && appArgs.skipPagination < 0) {
                     appArgs.skipPagination = pageCount;
-                if (filePos == 0)
+                }
+                if (filePos == 0) {
                     mergedDocument.setDefaultPageSize(calculateDefaultPageSize(doc));
+                }
                 mergedCopy.merge(doc, 1, doc.getNumberOfPages());
                 doc.close();
             }
@@ -631,26 +715,31 @@ public class App {
             reader = getInputFileReader(0);
         }
 
-        if (appArgs.jsonOutput && appArgs.outputFile.equals("-"))
+        if (appArgs.jsonOutput && appArgs.outputFile.equals("-")) {
             thepdf = new PdfDocument(reader);
-        else {
+        } else {
             java.io.OutputStream output;
-            if (appArgs.outputFile.equals("-"))
+            if (appArgs.outputFile.equals("-")) {
                 output = System.out;
-            else
+            } else {
                 output = new FileOutputStream(appArgs.outputFile);
+            }
             thepdf = new PdfDocument(reader, new PdfWriter(output));
         }
 
         // actions
-        if (appArgs.checkFonts || appArgs.embedFonts)
+        if (appArgs.checkFonts || appArgs.embedFonts) {
             checkFonts();
-        if (appArgs.checkJS)
+        }
+        if (appArgs.checkJS) {
             checkJavascripts(appArgs.strip);
-        if (appArgs.checkAnonymity)
+        }
+        if (appArgs.checkAnonymity) {
             checkAnonymity(appArgs.strip);
-        if (appArgs.paginate)
+        }
+        if (appArgs.paginate) {
             paginate();
+        }
 
         // output
         int numPages = thepdf.getNumberOfPages();
@@ -661,12 +750,15 @@ public class App {
                 .add("ok", true)
                 .add("at", (long) (System.currentTimeMillis() / 1000L))
                 .add("npages", numPages);
-            if (appArgs.mayModify)
+            if (appArgs.mayModify) {
                 result.add("modified", documentModified);
+            }
             JsonArrayBuilder errfResult = Json.createArrayBuilder();
-            for (int x = 0; x < 4; ++x)
-                if ((errorTypes & (1 << x)) != 0)
+            for (int x = 0; x < 4; ++x) {
+                if ((errorTypes & (1 << x)) != 0) {
                     errfResult.add(errfNameMap[1 << x]);
+                }
+            }
             if (errorTypes != 0) {
                 result.add("errf", errfResult.build());
                 result.add("fmt_errors", fmtErrors.build());
@@ -679,32 +771,36 @@ public class App {
             out.println(stWriter.toString());
         }
 
-        if (errorTypes != 0)
+        if (errorTypes != 0) {
             System.exit(1);
-        else if (!documentModified)
+        } else if (!documentModified) {
             System.exit(appArgs.unmodifiedStatus);
-        else
+        } else {
             System.exit(0);
+        }
     }
 
     static final private String romanNumeralOut[] = {"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"};
     static final private int romanNumeralIn[] = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
     static public void romanNumerals(StringBuilder sb, int n) {
         int pos = 0;
-        while (n > 0)
+        while (n > 0) {
             if (n >= romanNumeralIn[pos]) {
                 sb.append(romanNumeralOut[pos]);
                 n -= romanNumeralIn[pos];
-            } else
+            } else {
                 ++pos;
+            }
+        }
     }
     static public String expandFooter(String format, int pageno) {
         StringBuilder sb = new StringBuilder();
         int pos = 0;
         while (pos < format.length()) {
             int pct = format.indexOf('%', pos);
-            if (pct < 0)
+            if (pct < 0) {
                 pct = format.length();
+            }
             sb.append(format, pos, pct);
             if (pct + 1 < format.length() && format.charAt(pct + 1) == 'd') {
                 sb.append(pageno);
@@ -724,20 +820,23 @@ public class App {
         return sb.toString();
     }
     static public boolean complexFooterString(String format) {
-        if (format == null)
+        if (format == null) {
             return false;
+        }
         int pos = 0;
         while (pos < format.length()) {
             char ch = format.charAt(pos);
             if ((ch >= '0' && ch <= '9') || ch == ' ' || ch == ',' || ch == '.'
                 || ch == '-' || ch == '/' || ch == ':' || ch == 'c' || ch == 'i'
-                || ch == 'l' || ch == 'v' || ch == 'x')
+                || ch == 'l' || ch == 'v' || ch == 'x') {
                 ++pos;
-            else if (ch == '%' && pos + 1 < format.length()
-                     && (format.charAt(pos + 1) == 'r' || format.charAt(pos + 1) == 'd'))
+            } else if (ch == '%'
+                       && pos + 1 < format.length()
+                       && (format.charAt(pos + 1) == 'r' || format.charAt(pos + 1) == 'd')) {
                 pos += 2;
-            else
+            } else {
                 return true;
+            }
         }
         return false;
     }
@@ -755,19 +854,22 @@ public class App {
             java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
             byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
             appArgs.footerFont = PdfFontFactory.createFont(numberFontBytes, PdfEncodings.WINANSI, true);
-        } else if (appArgs.footerFont == null)
+        } else if (appArgs.footerFont == null) {
             appArgs.footerFont = lookupEmbedFont("Times-Roman").getBaseFont();
+        }
         int firstLocalPage = 1 + Math.max(appArgs.skipPagination, 0);
 
         for (int p = firstLocalPage; p <= thepdf.getNumberOfPages() - appArgs.blankPages; ++p) {
             int pageno = appArgs.firstPage + p - firstLocalPage;
             boolean flipped = appArgs.twoSided && pageno % 2 == 0;
             String lfoot = pageno % 2 == 0 ? appArgs.lefoot : appArgs.lofoot;
-            if (lfoot == null)
+            if (lfoot == null) {
                 lfoot = flipped ? appArgs.rfoot : appArgs.lfoot;
+            }
             String rfoot = pageno % 2 == 0 ? appArgs.refoot : appArgs.rofoot;
-            if (rfoot == null)
+            if (rfoot == null) {
                 rfoot = flipped ? appArgs.lfoot : appArgs.rfoot;
+            }
             Rectangle pagebox = thepdf.getPage(p).getPageSize();
             float lx = pagebox.getLeft() + (flipped ? appArgs.rmargin : appArgs.lmargin);
             float rx = pagebox.getRight() - (flipped ? appArgs.lmargin : appArgs.rmargin);
@@ -775,17 +877,17 @@ public class App {
             PdfCanvas cb = new PdfCanvas(thepdf, p);
             if (lfoot != "") {
                 Paragraph text = footerParagraph(expandFooter(lfoot, pageno));
-                new Canvas(cb, thepdf, pagebox)
+                new Canvas(cb, pagebox)
                     .showTextAligned(text, lx, by, p, TextAlignment.LEFT, VerticalAlignment.BOTTOM, 0);
             }
             if (appArgs.cfoot != "") {
                 Paragraph text = footerParagraph(expandFooter(appArgs.cfoot, pageno));
-                new Canvas(cb, thepdf, pagebox)
+                new Canvas(cb, pagebox)
                     .showTextAligned(text, (lx + rx) / 2, by, p, TextAlignment.CENTER, VerticalAlignment.BOTTOM, 0);
             }
             if (rfoot != "") {
                 Paragraph text = footerParagraph(expandFooter(rfoot, pageno));
-                new Canvas(cb, thepdf, pagebox)
+                new Canvas(cb, pagebox)
                     .showTextAligned(text, rx, by, p, TextAlignment.RIGHT, VerticalAlignment.BOTTOM, 0);
             }
             if (appArgs.footerRuleWidth > 0.0) {
@@ -806,22 +908,25 @@ public class App {
             PdfDictionary res = page.getAsDictionary(PdfName.Resources);
             checkFontsDict(p, res);
             PdfArray annots = page.getAsArray(PdfName.Annots);
-            if (annots != null)
+            if (annots != null) {
                 for (int j = 0; j < annots.size(); j++) {
                     PdfDictionary annot = annots.getAsDictionary(j);
                     checkFontsDict(j, annot.getAsDictionary(PdfName.Resources));
                 }
+            }
         }
     }
     public void checkFontsDict(int p, PdfDictionary res) {
-        if (res == null)
+        if (res == null) {
             return;
+        }
         checkFontsRefs(p, res, PdfName.XObject);
         checkFontsRefs(p, res, PdfName.Pattern);
         PdfDictionary fonts = res.getAsDictionary(PdfName.Font);
         if (fonts != null) {
-            for (PdfName key : fonts.keySet())
+            for (PdfName key : fonts.keySet()) {
                 checkFont(p, fonts.get(key));
+            }
         }
     }
     static private String refName(PdfObject obj) {
@@ -830,53 +935,59 @@ public class App {
     }
     private boolean seenRef(PdfObject obj) {
         String refname = refName(obj);
-        if (viewedFontRefs.contains(refname))
+        if (viewedFontRefs.contains(refname)) {
             return true;
-        else {
+        } else {
             viewedFontRefs.add(refname);
             return false;
         }
     }
     public void checkFontsRefs(int p, PdfDictionary res, PdfName xkey) {
         PdfDictionary xres = res.getAsDictionary(xkey);
-        if (xres == null)
+        if (xres == null) {
             return;
+        }
         for (PdfName key : xres.keySet()) {
             PdfObject obj = xres.get(key);
             if (obj.isIndirectReference()) {
-                if (seenRef(obj))
+                if (seenRef(obj)) {
                     continue;
-                else
+                } else {
                     obj = ((PdfIndirectReference) obj).getRefersTo(true);
+                }
             }
             if (obj.isStream()) {
                 PdfDictionary strdict = (PdfDictionary) obj;
                 PdfDictionary strres = strdict.getAsDictionary(PdfName.Resources);
-                if (strres != null && strres != res)
+                if (strres != null && strres != res) {
                     checkFontsDict(p, strres);
+                }
             }
         }
     }
     public void checkFont(int p, PdfObject fontobj) {
         String refname = "[direct]";
         if (fontobj.isIndirectReference()) {
-            if (seenRef(fontobj))
+            if (seenRef(fontobj)) {
                 return;
+            }
             refname = refName(fontobj);
             fontobj = ((PdfIndirectReference) fontobj).getRefersTo(true);
         }
-        if (!fontobj.isDictionary())
+        if (!fontobj.isDictionary()) {
             return;
+        }
 
         PdfDictionary font = (PdfDictionary) fontobj;
         PdfDictionary base = font;
 
         PdfName name = font.getAsName(PdfName.BaseFont);
         String namestr;
-        if (name == null)
+        if (name == null) {
             namestr = "[no name]";
-        else
+        } else {
             namestr = name.getValue();
+        }
 
         PdfName declared_type = font.getAsName(PdfName.Subtype);
         boolean isType0 = declared_type != null && declared_type.equals(PdfName.Type0);
@@ -895,40 +1006,45 @@ public class App {
         PdfDictionary desc = base.getAsDictionary(PdfName.FontDescriptor);
         if (desc == null) {
             if (declared_type.equals(PdfName.Type3)
-                && base.getAsDictionary(PdfName.CharProcs) != null)
+                && base.getAsDictionary(PdfName.CharProcs) != null) {
                 embedded_type = PdfName.Type3;
-            else
+            } else {
                 embedded_type = null;
-        } else if (desc.get(PdfName.FontFile) != null)
+            }
+        } else if (desc.get(PdfName.FontFile) != null) {
             embedded_type = PdfName.Type1;
-        else if (desc.get(PdfName.FontFile2) != null)
+        } else if (desc.get(PdfName.FontFile2) != null) {
             embedded_type = isType0 ? PdfName.CIDFontType2 : PdfName.TrueType;
-        else {
+        } else {
             PdfStream fontdict = desc.getAsStream(PdfName.FontFile3);
-            if (fontdict != null)
+            if (fontdict != null) {
                 embedded_type = fontdict.getAsName(PdfName.Subtype);
-            else
+            } else {
                 embedded_type = null;
+            }
         }
 
         PdfName claimed_type = embedded_type;
-        if (claimed_type == null)
+        if (claimed_type == null) {
             claimed_type = descendant_type;
-        if (claimed_type == null)
+        }
+        if (claimed_type == null) {
             claimed_type = declared_type;
+        }
 
         if (claimed_type.equals(PdfName.Type3)) {
             if (!type3FontNames.contains(namestr)) {
                 type3FontNames.add(namestr);
-                if (namestr.equals("[no name]"))
+                if (namestr.equals("[no name]")) {
                     addError(ERR_FONT_TYPE3, "Bad font: unnamed Type3 fonts first referenced on page " + p + ".");
-                else
+                } else {
                     addError(ERR_FONT_TYPE3, "Bad font: Type3 font “" + namestr + "” first referenced on page " + p + ".");
+                }
             }
         } else if (embedded_type == null) {
-            if (appArgs.embedFonts && tryEmbed(namestr, base))
-                /* OK */;
-            else if (!nonEmbeddedFontNames.contains(namestr)) {
+            if (appArgs.embedFonts && tryEmbed(namestr, base)) {
+                /* OK */
+            } else if (!nonEmbeddedFontNames.contains(namestr)) {
                 nonEmbeddedFontNames.add(namestr);
                 addError(ERR_FONT_NOTEMBEDDED, "Missing font: “" + namestr + "” not embedded, first referenced on page " + p + ".");
             }
@@ -936,23 +1052,27 @@ public class App {
     }
 
     private EmbedFontInfo lookupEmbedFont(String fontName) {
-        if (embedFontMap == null)
+        if (embedFontMap == null) {
             makeEmbedFontMap();
+        }
         EmbedFontInfo embedFont = embedFontMap.get(fontName);
-        if (embedFont != null && embedFont.load())
+        if (embedFont != null && embedFont.load()) {
             return embedFont;
-        else
+        } else {
             return null;
+        }
     }
     private boolean tryEmbed(String fontName, PdfDictionary font) {
         EmbedFontInfo embedFont = lookupEmbedFont(fontName);
-        if (embedFont == null)
+        if (embedFont == null) {
             return false;
+        }
 
         AnalEncoding encoding = AnalEncoding.getPdfEncoding(font);
         PdfFont baseFont = embedFont.getBaseFont(encoding);
-        if (baseFont == null)
+        if (baseFont == null) {
             return false;
+        }
 
         if (embedFont.descriptorReference == null) {
             try {
@@ -968,18 +1088,20 @@ public class App {
         if (!font.containsKey(PdfName.Widths)) {
             int firstChar = -1, lastChar = -1;
             PdfArray widths = new PdfArray();
-            for (int ch = 0; ch < 256; ++ch)
+            for (int ch = 0; ch < 256; ++ch) {
                 if (encoding.encoding[ch] != null && !encoding.encoding[ch].equals(".notdef")) {
-                    if (firstChar < 0)
+                    if (firstChar < 0) {
                         firstChar = ch;
-                    else {
-                        for (; lastChar + 1 < ch; ++lastChar)
+                    } else {
+                        for (; lastChar + 1 < ch; ++lastChar) {
                             widths.add(new PdfNumber(0));
+                        }
                     }
                     lastChar = ch;
                     int w = baseFont.getWidth(AnalEncoding.unicodeFor(encoding.encoding[ch]));
                     widths.add(new PdfNumber(w));
                 }
+            }
             try {
                 font.put(PdfName.FirstChar, new PdfNumber(firstChar));
                 font.put(PdfName.LastChar, new PdfNumber(lastChar));
@@ -997,8 +1119,9 @@ public class App {
         return true;
     }
     private void addEmbedFont(String baseName, String fontName, String filePrefix, boolean symbolic) {
-        if (embedFontMap == null)
+        if (embedFontMap == null) {
             embedFontMap = new TreeMap<String, EmbedFontInfo>();
+        }
         embedFontMap.put(baseName, new EmbedFontInfo(baseName, fontName, filePrefix, symbolic));
     }
     private void addEmbedFont(String baseName, String fontName, String filePrefix) {
@@ -1070,56 +1193,66 @@ public class App {
 
         PdfDictionary names = doccatalog.getAsDictionary(PdfName.Names);
         if (names != null) {
-            if (names.get(PdfName.JavaScript) != null)
+            if (names.get(PdfName.JavaScript) != null) {
                 recordJavascript(names, PdfName.JavaScript, strip, " in global scripts");
+            }
         }
 
         PdfDictionary form = doccatalog.getAsDictionary(PdfName.AcroForm);
         if (form != null) {
             PdfArray fields = doccatalog.getAsArray(PdfName.Fields);
-            for (int j = 0; j < fields.size(); ++j)
+            for (int j = 0; j < fields.size(); ++j) {
                 checkFormFieldJavascripts(fields.getAsDictionary(j), strip);
+            }
         }
 
         for (int p = 1; p <= thepdf.getNumberOfPages(); ++p) {
             PdfDictionary page = thepdf.getPage(p).getPdfObject();
             aa = page.getAsDictionary(PdfName.AA);
-            if (aa != null)
+            if (aa != null) {
                 checkJavascripts(aa, strip, " on page " + p);
+            }
             PdfArray annots = page.getAsArray(PdfName.Annots);
-            if (annots != null)
+            if (annots != null) {
                 for (int j = 0; j < annots.size(); j++) {
                     PdfDictionary annot = annots.getAsDictionary(j);
                     aa = annot.getAsDictionary(PdfName.AA);
-                    if (aa != null)
+                    if (aa != null) {
                         checkJavascripts(aa, strip, " in page " + p + " annotation");
+                    }
                 }
+            }
         }
     }
     private void checkFormFieldJavascripts(PdfDictionary field, boolean strip) {
         PdfDictionary aa = field.getAsDictionary(PdfName.AA);
-        if (aa != null)
+        if (aa != null) {
             checkJavascripts(aa, strip, " in form");
+        }
 
         PdfArray kids = field.getAsArray(PdfName.Kids);
-        for (int j = 0; j < kids.size(); ++j)
+        for (int j = 0; j < kids.size(); ++j) {
             checkFormFieldJavascripts(kids.getAsDictionary(j), strip);
+        }
     }
     private void checkJavascripts(PdfDictionary holder, boolean strip, String where) {
         for (PdfName key : holder.keySet()) {
             PdfDictionary value = holder.getAsDictionary(key);
             PdfObject stype = null;
-            if (value != null)
+            if (value != null) {
                 stype = value.get(PdfName.S);
-            if (stype == null || !stype.isName())
+            }
+            if (stype == null || !stype.isName()) {
                 continue;
+            }
             PdfName sname = (PdfName) stype;
-            if (stype == PdfName.JavaScript)
+            if (stype == PdfName.JavaScript) {
                 recordJavascript(holder, key, strip, where);
-            else if (stype == PdfName.Rendition && value.get(PdfName.JS) != null)
+            } else if (stype == PdfName.Rendition && value.get(PdfName.JS) != null) {
                 recordJavascript(value, PdfName.JS, strip, where + " [rendition]");
-            else if (stype == PdfName.ImportData)
+            } else if (stype == PdfName.ImportData) {
                 recordJavascript(holder, key, strip, where + " [import data]");
+            }
         }
     }
     private void recordJavascript(PdfDictionary holder, PdfName key, boolean strip, String where) {
@@ -1134,8 +1267,9 @@ public class App {
         PdfDictionary trailer = thepdf.getTrailer();
         PdfDictionary info = trailer != null ? trailer.getAsDictionary(PdfName.Info) : null;
         PdfString author = null;
-        if (info != null)
+        if (info != null) {
             author = info.getAsString(PdfName.Author);
+        }
         if (author != null && !author.toString().equals("")) {
             if (strip) {
                 documentModified = true;
