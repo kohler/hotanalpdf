@@ -1,52 +1,65 @@
 package org.lcdf.hotanalpdf;
 
-import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.font.PdfFont;
-import com.itextpdf.kernel.font.PdfFontFactory;
-import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.io.font.FontProgram;
 import com.itextpdf.io.font.FontProgramFactory;
 import com.itextpdf.io.font.PdfEncodings;
 import com.itextpdf.io.image.ImageData;
 import com.itextpdf.io.image.ImageDataFactory;
+import com.itextpdf.io.source.ByteUtils;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
+import com.itextpdf.kernel.geom.PageSize;
+import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.canvas.parser.data.IEventData;
+import com.itextpdf.kernel.pdf.canvas.parser.data.TextRenderInfo;
+import com.itextpdf.kernel.pdf.canvas.parser.EventType;
+import com.itextpdf.kernel.pdf.canvas.parser.listener.IEventListener;
+import com.itextpdf.kernel.pdf.canvas.parser.PdfCanvasProcessor;
 import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
+import com.itextpdf.kernel.pdf.PdfArray;
+import com.itextpdf.kernel.pdf.PdfDictionary;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfIndirectReference;
+import com.itextpdf.kernel.pdf.PdfLiteral;
+import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfNumber;
+import com.itextpdf.kernel.pdf.PdfObject;
+import com.itextpdf.kernel.pdf.PdfOutputStream;
+import com.itextpdf.kernel.pdf.PdfPage;
+import com.itextpdf.kernel.pdf.PdfReader;
+import com.itextpdf.kernel.pdf.PdfResources;
+import com.itextpdf.kernel.pdf.PdfStream;
+import com.itextpdf.kernel.pdf.PdfString;
+import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
+import com.itextpdf.kernel.utils.PdfMerger;
 import com.itextpdf.layout.Canvas;
 import com.itextpdf.layout.element.Image;
 import com.itextpdf.layout.element.Paragraph;
 import com.itextpdf.layout.property.TextAlignment;
 import com.itextpdf.layout.property.VerticalAlignment;
-import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfReader;
-import com.itextpdf.kernel.pdf.PdfWriter;
-import com.itextpdf.kernel.utils.PdfMerger;
-import com.itextpdf.kernel.pdf.PdfDictionary;
-import com.itextpdf.kernel.pdf.PdfName;
-import com.itextpdf.kernel.pdf.PdfNumber;
-import com.itextpdf.kernel.pdf.PdfObject;
-import com.itextpdf.kernel.pdf.PdfIndirectReference;
-import com.itextpdf.kernel.pdf.PdfStream;
-import com.itextpdf.kernel.pdf.PdfString;
-import com.itextpdf.kernel.pdf.PdfArray;
-import com.itextpdf.kernel.pdf.PdfPage;
-import com.itextpdf.kernel.geom.PageSize;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.io.StringWriter;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.Stack;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import javax.json.Json;
-import javax.json.JsonObject;
 import javax.json.JsonArrayBuilder;
+import javax.json.JsonObject;
 import javax.json.JsonObjectBuilder;
 import javax.json.JsonWriter;
 
@@ -379,6 +392,7 @@ public class App {
         public boolean checkJS = false;
         public boolean checkAnonymity = false;
         public boolean strip = false;
+        public boolean redactPermissions = false;
         public boolean mayModify = false;
         public ArrayList<AppImageArg> images = new ArrayList<AppImageArg>();
 
@@ -386,7 +400,11 @@ public class App {
         private boolean paginateRoman = false;
 
         public void apply(Option opt, CommandLine cl) {
-            switch (opt.getOpt()) {
+            String optname = opt.getOpt();
+            if (optname == null) {
+                optname = opt.getLongOpt();
+            }
+            switch (optname) {
             case "o":
                 this.outputFileGiven = true;
                 this.outputFile = opt.getValue();
@@ -536,6 +554,9 @@ public class App {
             case "s":
                 this.strip = true;
                 break;
+            case "redact-permissions":
+                this.redactPermissions = true;
+                break;
             }
         }
 
@@ -555,7 +576,8 @@ public class App {
                 || this.strip
                 || this.embedFonts
                 || this.blankPages > 0
-                || this.images.size() > 0;
+                || this.images.size() > 0
+                || this.redactPermissions;
             if (this.mayModify
                 && this.jsonOutput
                 && this.outputFile.equals("-")) {
@@ -618,6 +640,7 @@ public class App {
                           .hasArg(true).argName("N").build());
         options.addOption(Option.builder().longOpt("add-blank").hasArg(true).argName("N").build());
         options.addOption(Option.builder("I").longOpt("image").numberOfArgs(2).argName("POS IMAGE").desc("add image to page").build());
+        options.addOption(Option.builder().longOpt("redact-permissions").desc("redact ACM permissions").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
         int status = 0;
 
@@ -816,6 +839,9 @@ public class App {
         if (appArgs.checkAnonymity) {
             checkAnonymity(appArgs.strip);
         }
+        if (appArgs.redactPermissions) {
+            redactPermissions();
+        }
         if (appArgs.paginate) {
             paginate();
         }
@@ -981,6 +1007,10 @@ public class App {
             }
             documentModified = true;
         }
+    }
+
+    public void redactPermissions() throws IOException {
+        RedactPermissionsProcessor.cleanupPage(thepdf.getPage(1));
     }
 
     public void addImages() throws IOException {
@@ -1382,5 +1412,114 @@ public class App {
             addError(ERR_ANONYMITY, (strip ? "Stripping " : "Document contains ") + "author metadata “" + author.toString() + "”; submissions should be anonymous.");
         }
         // XXX should also strip all XMP metadata but fuck it
+    }
+}
+
+class RedactPermissionsEventListener implements IEventListener {
+    private List<TextRenderInfo> renderInfo = new ArrayList<>();
+    @Override
+    public void eventOccurred(IEventData data, EventType type) {
+        if (type == EventType.RENDER_TEXT) {
+            TextRenderInfo tri = (TextRenderInfo) data;
+            tri.preserveGraphicsState();
+            renderInfo.add(tri);
+        }
+    }
+    List<TextRenderInfo> getText() {
+        List<TextRenderInfo> tri = renderInfo;
+        renderInfo = new ArrayList<>();
+        return tri;
+    }
+    @Override
+    public Set<EventType> getSupportedEvents() {
+        return null;
+    }
+}
+
+class RedactPermissionsProcessor extends PdfCanvasProcessor {
+    private PdfCanvas canvas;
+    private java.util.Random rand;
+    private int mode = 0;
+    private double ypos = 0.0;
+    private double lead = 0.0;
+    public RedactPermissionsProcessor() {
+        super(new RedactPermissionsEventListener());
+        this.rand = new java.util.Random();
+    }
+    static public void cleanupPage(PdfPage page) {
+        RedactPermissionsProcessor rpp = new RedactPermissionsProcessor();
+        rpp.canvas = new PdfCanvas(new PdfStream(), page.getResources(), page.getDocument());
+        rpp.processContent(page.getContentBytes(), page.getResources());
+        page.put(PdfName.Contents, rpp.canvas.getContentStream());
+    }
+    @Override
+    protected void invokeOperator(PdfLiteral operator, List<PdfObject> operands) {
+        String opstr = operator.toString();
+        if (!"Do".equals(opstr)) {
+            super.invokeOperator(operator, operands);
+        }
+        if (("TJ".equals(opstr) || "Tj".equals(opstr) || "'".equals(opstr) || "\"".equals(opstr))
+            && cleanText(opstr, operands)) {
+            super.invokeOperator(operator, operands);
+            // but do not copy
+        } else {
+            int i = 0, n = operands.size();
+            PdfOutputStream stream = canvas.getContentStream().getOutputStream();
+            for (PdfObject obj : operands) {
+                stream.write(obj);
+                ++i;
+                if (i == n) {
+                    stream.writeNewLine();
+                } else {
+                    stream.writeSpace();
+                }
+            }
+        }
+    }
+    private boolean cleanText(String opstr, List<PdfObject> operands) {
+        if (this.mode == 3) {
+            return false;
+        } else {
+            List<TextRenderInfo> tris = ((RedactPermissionsEventListener) this.eventListener).getText();
+            System.err.println(getGraphicsState().getCtm());
+            System.err.println(getGraphicsState().getHorizontalScaling());
+            int i = 0;
+            for (TextRenderInfo tri : tris) {
+                com.itextpdf.kernel.geom.LineSegment bl = tri.getBaseline().transformBy(getGraphicsState().getCtm());
+                double triypos = bl.getEndPoint().get(1);
+                /*System.err.println("\nMode " +this.mode + " step " + i + " ypos " + this.ypos);
+                System.err.println(tri.getText());
+                System.err.println(bl.getStartPoint().toString());
+                System.err.println(bl.getEndPoint().toString());
+                System.err.println(tri.getTextMatrix().toString());
+                System.err.println(tri.getFontSize());*/
+                if (tri.getFontSize() > 8.1) {
+                    return false;
+                } else if (bl.getStartPoint().get(1) != triypos) {
+                    return false;
+                } else if (bl.getStartPoint().get(0) > bl.getEndPoint().get(0)) {
+                    return false;
+                } else if (bl.getEndPoint().get(0) > 550) {
+                    return false;
+                } else if (triypos > 72.0 * 3.0) {
+                    return false;
+                }
+                ++i;
+                if (this.mode == 2 && triypos < this.ypos - this.lead) {
+                    this.mode = 3;
+                    return false;
+                } else if (this.mode == 2) {
+                    this.ypos = triypos;
+                } else if (this.mode == 1 && this.ypos - triypos > 1) {
+                    this.lead = this.ypos - triypos + 0.2;
+                    this.ypos = triypos;
+                    this.mode = 2;
+                } else if (this.mode == 0) {
+                    this.ypos = triypos;
+                    this.mode = 1;
+                }
+            }
+            return true;
+        }
     }
 }
