@@ -358,6 +358,13 @@ public class App {
             float ry = negY ? pagebox.getHeight() - y - image.getImageScaledHeight() : y;
             image.setFixedPosition(rx, ry);
         }
+        public void addXObject(PdfCanvas canvas, PdfFormXObject image, Rectangle pagebox) {
+            float rw = hasWidth ? width : image.getWidth(),
+                rh = hasHeight ? height : image.getHeight(),
+                rx = negX ? pagebox.getWidth() - x - rw : x,
+                ry = negY ? pagebox.getHeight() - y - rh : y;
+            canvas.addXObjectFittedIntoRectangle(image, new Rectangle(rx, ry, rw, rh));
+        }
     }
 
     static public class AppArgs {
@@ -1027,10 +1034,17 @@ public class App {
                 pagebox = page.getPageSize();
                 lastCanvas = new PdfCanvas(page.newContentStreamBefore(), page.getResources(), thepdf);
             }
-            ImageData imageData = ImageDataFactory.create(a.filename);
-            Image image = new Image(imageData);
-            a.scalePosition(image, pagebox);
-            new Canvas(lastCanvas, pagebox).add(image);
+            if (a.filename.endsWith(".pdf")) {
+                PdfDocument srcDoc = new PdfDocument(new PdfReader(a.filename));
+                PdfFormXObject img = srcDoc.getFirstPage().copyAsFormXObject(thepdf);
+                a.addXObject(lastCanvas, img, pagebox);
+                srcDoc.close();
+            } else {
+                ImageData imageData = ImageDataFactory.create(a.filename);
+                Image image = new Image(imageData);
+                a.scalePosition(image, pagebox);
+                new Canvas(lastCanvas, pagebox).add(image);
+            }
             documentModified = true;
         }
     }
@@ -1481,8 +1495,6 @@ class RedactPermissionsProcessor extends PdfCanvasProcessor {
             return false;
         } else {
             List<TextRenderInfo> tris = ((RedactPermissionsEventListener) this.eventListener).getText();
-            System.err.println(getGraphicsState().getCtm());
-            System.err.println(getGraphicsState().getHorizontalScaling());
             int i = 0;
             for (TextRenderInfo tri : tris) {
                 com.itextpdf.kernel.geom.LineSegment bl = tri.getBaseline().transformBy(getGraphicsState().getCtm());
