@@ -84,6 +84,9 @@ public class App {
     private TreeSet<String> nonEmbeddedFontNames = new TreeSet<String>();
     private boolean documentModified = false;
 
+    static public String kpsewhich = "kpsewhich";
+    static public boolean kpsewhichChecked = false;
+
     static public class EmbedFontInfo {
         public String baseName;
         public String fontName;
@@ -94,8 +97,6 @@ public class App {
         private FontProgram fontProgram = null;
         private boolean loaded = false;
         public PdfIndirectReference descriptorReference = null;
-        static private String kpsewhich = "kpsewhich";
-        static private boolean kpsewhichChecked = false;
 
         public EmbedFontInfo(String baseName, String fontName, String filePrefix, boolean symbolic) {
             this.baseName = baseName;
@@ -564,6 +565,10 @@ public class App {
             case "redact-permissions":
                 this.redactPermissions = true;
                 break;
+            case "kpsewhich":
+                kpsewhich = opt.getValue();
+                kpsewhichChecked = true;
+                break;
             }
         }
 
@@ -648,6 +653,7 @@ public class App {
         options.addOption(Option.builder().longOpt("add-blank").hasArg(true).argName("N").build());
         options.addOption(Option.builder("I").longOpt("image").numberOfArgs(2).argName("POS IMAGE").desc("add image to page").build());
         options.addOption(Option.builder().longOpt("redact-permissions").desc("redact ACM permissions").build());
+        options.addOption(Option.builder().longOpt("kpsewhich").hasArg(true).argName("PATH").desc("kpsewhich binary").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
         int status = 0;
 
@@ -1184,9 +1190,9 @@ public class App {
             if (!type3FontNames.contains(namestr)) {
                 type3FontNames.add(namestr);
                 if (namestr.equals("[no name]")) {
-                    addError(ERR_FONT_TYPE3, "Bad font: unnamed Type3 fonts first referenced on page " + p + ".");
+                    addError(ERR_FONT_TYPE3, "Bad font: unnamed Type3 fonts first referenced on page " + p);
                 } else {
-                    addError(ERR_FONT_TYPE3, "Bad font: Type3 font “" + namestr + "” first referenced on page " + p + ".");
+                    addError(ERR_FONT_TYPE3, "Bad font: Type3 font ‘" + namestr + "’ first referenced on page " + p);
                 }
             }
         } else if (embedded_type == null) {
@@ -1194,7 +1200,7 @@ public class App {
                 /* OK */
             } else if (!nonEmbeddedFontNames.contains(namestr)) {
                 nonEmbeddedFontNames.add(namestr);
-                addError(ERR_FONT_NOTEMBEDDED, "Missing font: “" + namestr + "” not embedded, first referenced on page " + p + ".");
+                addError(ERR_FONT_NOTEMBEDDED, "Missing font: ‘" + namestr + "’ not embedded, first referenced on page " + p);
             }
         }
     }
@@ -1408,7 +1414,7 @@ public class App {
             documentModified = true;
             holder.remove(key);
         }
-        addError(ERR_JAVASCRIPT, (strip ? "Stripping " : "Document contains ") + "JavaScript actions" + where + ".");
+        addError(ERR_JAVASCRIPT, (strip ? "Stripping " : "Document contains ") + "JavaScript actions" + where);
     }
 
     public void checkAnonymity(boolean strip) {
@@ -1423,7 +1429,7 @@ public class App {
                 documentModified = true;
                 info.remove(PdfName.Author);
             }
-            addError(ERR_ANONYMITY, (strip ? "Stripping " : "Document contains ") + "author metadata “" + author.toString() + "”; submissions should be anonymous.");
+            addError(ERR_ANONYMITY, (strip ? "Stripping " : "Document contains ") + "author metadata ‘" + author.toString() + "’; submissions should be anonymous");
         }
         // XXX should also strip all XMP metadata but fuck it
     }
