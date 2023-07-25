@@ -37,8 +37,8 @@ import com.itextpdf.kernel.utils.PdfMerger;
 import com.itextpdf.layout.Canvas;
 import com.itextpdf.layout.element.Image;
 import com.itextpdf.layout.element.Paragraph;
-import com.itextpdf.layout.property.TextAlignment;
-import com.itextpdf.layout.property.VerticalAlignment;
+import com.itextpdf.layout.properties.TextAlignment;
+import com.itextpdf.layout.properties.VerticalAlignment;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -57,11 +57,11 @@ import java.util.Set;
 import java.util.Stack;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import javax.json.Json;
-import javax.json.JsonArrayBuilder;
-import javax.json.JsonObject;
-import javax.json.JsonObjectBuilder;
-import javax.json.JsonWriter;
+import jakarta.json.Json;
+import jakarta.json.JsonArrayBuilder;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonObjectBuilder;
+import jakarta.json.JsonWriter;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.cli.Options;
@@ -119,14 +119,14 @@ public class App {
             return fontProgram;
         }
         public PdfFont getBaseFont() throws IOException {
-            return PdfFontFactory.createFont(getFontProgram(), PdfEncodings.WINANSI, true);
+            return PdfFontFactory.createFont(getFontProgram(), PdfEncodings.WINANSI);
         }
         public PdfFont getBaseFont(PdfDictionary fontDict) {
             return getBaseFont(AnalEncoding.getPdfEncoding(fontDict));
         }
         public PdfFont getBaseFont(AnalEncoding encoding) {
             try {
-                return PdfFontFactory.createFont(getFontProgram(), encoding.unparseItext(), true);
+                return PdfFontFactory.createFont(getFontProgram(), encoding.unparseItext());
             } catch (Throwable e) {
                 return null;
             }
@@ -729,13 +729,13 @@ public class App {
                     byte[] pfbData = IOUtils.toByteArray(pfbStream);
                     byte[] afmData = IOUtils.toByteArray(afmStream);
                     FontProgram fontProgram = FontProgramFactory.createType1Font(afmData, pfbData);
-                    font = PdfFontFactory.createFont(fontProgram, PdfEncodings.WINANSI, true);
+                    font = PdfFontFactory.createFont(fontProgram, PdfEncodings.WINANSI);
                 }
             }
             if (font == null) {
                 java.io.InputStream fileStream = new java.io.FileInputStream(fileName);
                 byte[] fileData = IOUtils.toByteArray(fileStream);
-                font = PdfFontFactory.createFont(fileData, PdfEncodings.IDENTITY_H, true);
+                font = PdfFontFactory.createFont(fileData, PdfEncodings.IDENTITY_H);
             }
             appArgs.footerFont = font;
         } catch (IOException e) {
@@ -864,6 +864,7 @@ public class App {
 
         // output
         int numPages = thepdf.getNumberOfPages();
+        String title = thepdf.getDocumentInfo().getTitle();
         thepdf.close();
 
         if (appArgs.jsonOutput) {
@@ -871,6 +872,9 @@ public class App {
                 .add("ok", true)
                 .add("at", (long) (System.currentTimeMillis() / 1000L))
                 .add("npages", numPages);
+            if (title != "") {
+                result.add("title", title);
+            }
             if (appArgs.mayModify) {
                 result.add("modified", documentModified);
             }
@@ -974,7 +978,7 @@ public class App {
         if (appArgs.footerFont == null && !complexFooter()) {
             java.io.InputStream numberFontStream = this.getClass().getResourceAsStream("/HotCRPNumberTime.otf");
             byte[] numberFontBytes = IOUtils.toByteArray(numberFontStream);
-            appArgs.footerFont = PdfFontFactory.createFont(numberFontBytes, PdfEncodings.WINANSI, true);
+            appArgs.footerFont = PdfFontFactory.createFont(numberFontBytes, PdfEncodings.WINANSI);
         } else if (appArgs.footerFont == null) {
             appArgs.footerFont = lookupEmbedFont("Times-Roman").getBaseFont();
         }
