@@ -872,7 +872,7 @@ public class App {
                 .add("ok", true)
                 .add("at", (long) (System.currentTimeMillis() / 1000L))
                 .add("npages", numPages);
-            if (title != "") {
+            if (title != null && title != "") {
                 result.add("title", title);
             }
             if (appArgs.mayModify) {
