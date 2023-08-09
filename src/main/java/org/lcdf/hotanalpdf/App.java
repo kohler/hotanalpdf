@@ -39,6 +39,7 @@ import com.itextpdf.layout.element.Image;
 import com.itextpdf.layout.element.Paragraph;
 import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.layout.properties.VerticalAlignment;
+import com.itextpdf.commons.exceptions.ITextException;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -326,11 +327,19 @@ public class App {
     private TreeMap<String, EmbedFontInfo> embedFontMap = null;
     private TreeMap<String, PdfIndirectReference> loadedFonts = new TreeMap<String, PdfIndirectReference>();
 
-    public final int ERR_FONT_TYPE3 = 1;
-    public final int ERR_FONT_NOTEMBEDDED = 2;
-    public final int ERR_JAVASCRIPT = 4;
-    public final int ERR_ANONYMITY = 8;
-    public final String errfNameMap[] = {null, "fonttype", "fontembed", null, "javascript", null, null, null, "authormeta"};
+    public final int ERR_FAIL = 1;
+    public final int ERR_FONT_TYPE3 = 2;
+    public final int ERR_FONT_NOTEMBEDDED = 4;
+    public final int ERR_JAVASCRIPT = 8;
+    public final int ERR_ANONYMITY = 16;
+    public final String errfNameMap[] = {
+        null,
+        "fail",
+        "fonttype", null,
+        "fontembed", null, null, null,
+        "javascript", null, null, null, null, null, null, null,
+        "authormeta"
+    };
 
     static public class AppImageArg {
         public int pageno = 1;
@@ -784,7 +793,7 @@ public class App {
         return pageSize;
     }
 
-    private PdfReader getInputFileReader(int filePos) throws IOException {
+    private PdfReader getInputFileReader(int filePos) throws IOException, ITextException {
         if (appArgs.inputFiles.get(filePos).equals("-")) {
             return new PdfReader(System.in);
         } else {
@@ -804,17 +813,21 @@ public class App {
 
             int pageCount = 0;
             for (int filePos = 0; filePos < appArgs.inputFiles.size(); ++filePos) {
-                PdfDocument doc = new PdfDocument(getInputFileReader(filePos));
-                pageCount += doc.getNumberOfPages();
-                if (filePos + 1 == appArgs.paginateFilePosition
-                    && appArgs.skipPagination < 0) {
-                    appArgs.skipPagination = pageCount;
+                try {
+                    PdfDocument doc = new PdfDocument(getInputFileReader(filePos));
+                    pageCount += doc.getNumberOfPages();
+                    if (filePos + 1 == appArgs.paginateFilePosition
+                        && appArgs.skipPagination < 0) {
+                        appArgs.skipPagination = pageCount;
+                    }
+                    if (filePos == 0) {
+                        mergedDocument.setDefaultPageSize(calculateDefaultPageSize(doc));
+                    }
+                    mergedCopy.merge(doc, 1, doc.getNumberOfPages());
+                    doc.close();
+                } catch (Exception e) {
+                    addError(ERR_FAIL, "Error reading " + appArgs.inputFiles.get(filePos));
                 }
-                if (filePos == 0) {
-                    mergedDocument.setDefaultPageSize(calculateDefaultPageSize(doc));
-                }
-                mergedCopy.merge(doc, 1, doc.getNumberOfPages());
-                doc.close();
             }
 
             for (int i = 0; i < appArgs.blankPages; ++i) {
@@ -827,46 +840,56 @@ public class App {
             mergedOutputStream.close();
             reader = new PdfReader(inputStream);
         } else {
-            reader = getInputFileReader(0);
-        }
-
-        if (appArgs.jsonOutput && appArgs.outputFile.equals("-")) {
-            thepdf = new PdfDocument(reader);
-        } else {
-            java.io.OutputStream output;
-            if (appArgs.outputFile.equals("-")) {
-                output = System.out;
-            } else {
-                output = new FileOutputStream(appArgs.outputFile);
+            try {
+                reader = getInputFileReader(0);
+            } catch (Exception e) {
+                addError(ERR_FAIL, "Error reading " + appArgs.inputFiles.get(0));
+                reader = null;
             }
-            thepdf = new PdfDocument(reader, new PdfWriter(output));
         }
 
-        // actions
-        if (appArgs.checkFonts || appArgs.embedFonts) {
-            checkFonts();
-        }
-        if (appArgs.checkJS) {
-            checkJavascripts(appArgs.strip);
-        }
-        if (appArgs.checkAnonymity) {
-            checkAnonymity(appArgs.strip);
-        }
-        if (appArgs.redactPermissions) {
-            redactPermissions();
-        }
-        if (appArgs.paginate) {
-            paginate();
-        }
-        if (appArgs.images.size() > 0) {
-            addImages();
+        int numPages = 0;
+        String title = null;
+
+        if (reader != null) {
+            if (appArgs.jsonOutput && appArgs.outputFile.equals("-")) {
+                thepdf = new PdfDocument(reader);
+            } else {
+                java.io.OutputStream output;
+                if (appArgs.outputFile.equals("-")) {
+                    output = System.out;
+                } else {
+                    output = new FileOutputStream(appArgs.outputFile);
+                }
+                thepdf = new PdfDocument(reader, new PdfWriter(output));
+            }
+
+            // actions
+            if (appArgs.checkFonts || appArgs.embedFonts) {
+                checkFonts();
+            }
+            if (appArgs.checkJS) {
+                checkJavascripts(appArgs.strip);
+            }
+            if (appArgs.checkAnonymity) {
+                checkAnonymity(appArgs.strip);
+            }
+            if (appArgs.redactPermissions) {
+                redactPermissions();
+            }
+            if (appArgs.paginate) {
+                paginate();
+            }
+            if (appArgs.images.size() > 0) {
+                addImages();
+            }
+
+            numPages = thepdf.getNumberOfPages();
+            title = thepdf.getDocumentInfo().getTitle();
+            thepdf.close();
         }
 
         // output
-        int numPages = thepdf.getNumberOfPages();
-        String title = thepdf.getDocumentInfo().getTitle();
-        thepdf.close();
-
         if (appArgs.jsonOutput) {
             JsonObjectBuilder result = Json.createObjectBuilder()
                 .add("ok", true)
