@@ -55,6 +55,7 @@ import java.io.PrintStream;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
@@ -893,7 +894,6 @@ public class App {
             ArrayList<PdfOutline> outlines = null;
             AppOutlineArg outlineArg = appArgs.outlines;
             if (outlineArg != null) {
-                mergedCopy = new PdfMerger(mergedDocument, new PdfMergerProperties().setMergeOutlines(false));
                 outlines = new ArrayList<PdfOutline>();
                 outlines.add(mergedDocument.getOutlines(false));
             }
@@ -911,7 +911,17 @@ public class App {
                     if (filePos == 0) {
                         mergedDocument.setDefaultPageSize(calculateDefaultPageSize(doc));
                     }
+
                     mergedCopy.merge(doc, 1, doc.getNumberOfPages());
+                    if (outlines != null && doc.hasOutlines()) {
+                        // remove newly-merged outlines
+                        List<PdfOutline> current = outlines.get(0).getAllChildren();
+                        PdfOutline expected = outlines.size() > 1 ? outlines.get(1) : null;
+                        ListIterator<PdfOutline> it = current.listIterator(current.size());
+                        while (it.hasPrevious() && it.previous() != expected) {
+                            it.remove();
+                        }
+                    }
                     doc.close();
 
                     while (outlineArg != null && outlineArg.filePos == filePos) {
