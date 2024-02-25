@@ -388,6 +388,7 @@ public class App {
         public int filePos;
         public int depth;
         public String title;
+        public PdfExplicitDestination destination;
         public AppOutlineArg next = null;
 
         public AppOutlineArg(int filePos, String decoratedTitle) throws ArrayIndexOutOfBoundsException {
@@ -664,14 +665,21 @@ public class App {
             }
         }
 
-        public void applyOutline(String title) {
-            AppOutlineArg outline = new AppOutlineArg(this.inputFiles.size(), title);
+        public void applyOutline(AppOutlineArg outline) {
+            int lastDepth = this.lastOutline != null ? this.lastOutline.depth : 0;
+            if (outline.depth > lastDepth + 1) {
+                applyOutline(new AppOutlineArg(outline.filePos, outline.depth - 1, "[empty]"));
+            }
             if (this.lastOutline == null) {
                 this.outlines = outline;
             } else {
                 this.lastOutline.next = outline;
             }
             this.lastOutline = outline;
+        }
+
+        public void applyOutline(String title) {
+            applyOutline(new AppOutlineArg(this.inputFiles.size(), title));
         }
     }
 
@@ -890,12 +898,12 @@ public class App {
             || appArgs.outlines != null) {
             ByteArrayOutputStream mergedOutputStream = new ByteArrayOutputStream();
             PdfDocument mergedDocument = new PdfDocument(new PdfWriter(mergedOutputStream));
-            PdfMerger mergedCopy = new PdfMerger(mergedDocument);
-            ArrayList<PdfOutline> outlines = null;
+            PdfMerger mergedCopy;
             AppOutlineArg outlineArg = appArgs.outlines;
             if (outlineArg != null) {
-                outlines = new ArrayList<PdfOutline>();
-                outlines.add(mergedDocument.getOutlines(false));
+                mergedCopy = new PdfMerger(mergedDocument, new PdfMergerProperties().setMergeOutlines(false));
+            } else {
+                mergedCopy = new PdfMerger(mergedDocument);
             }
 
             int pageCount = 0;
@@ -913,28 +921,10 @@ public class App {
                     }
 
                     mergedCopy.merge(doc, 1, doc.getNumberOfPages());
-                    if (outlines != null && doc.hasOutlines()) {
-                        // remove newly-merged outlines
-                        List<PdfOutline> current = outlines.get(0).getAllChildren();
-                        PdfOutline expected = outlines.size() > 1 ? outlines.get(1) : null;
-                        ListIterator<PdfOutline> it = current.listIterator(current.size());
-                        while (it.hasPrevious() && it.previous() != expected) {
-                            it.remove();
-                        }
-                    }
                     doc.close();
 
                     while (outlineArg != null && outlineArg.filePos == filePos) {
-                        while (outlineArg.depth < outlines.size()) {
-                            outlines.remove(outlines.size() - 1);
-                        }
-                        while (outlineArg.depth >= outlines.size()) {
-                            PdfOutline parent = outlines.get(outlines.size() - 1);
-                            String title = outlineArg.depth == outlines.size() ? outlineArg.title : "<placeholder>";
-                            PdfOutline child = parent.addOutline(title);
-                            child.addDestination(PdfExplicitDestination.createFit(mergedDocument.getPage(firstPage + 1)));
-                            outlines.add(child);
-                        }
+                        outlineArg.destination = PdfExplicitDestination.createFit(mergedDocument.getPage(firstPage + 1));
                         outlineArg = outlineArg.next;
                     }
                 } catch (Exception e) {
@@ -946,6 +936,26 @@ public class App {
             for (int i = 0; i < appArgs.blankPages; ++i) {
                 mergedDocument.addNewPage(mergedDocument.getDefaultPageSize());
                 documentModified = true;
+            }
+
+            if (appArgs.outlines != null) {
+                mergedDocument.getOutlines(false).removeOutline();
+                mergedDocument.initializeOutlines();
+                ArrayList<PdfOutline> outlines = new ArrayList<PdfOutline>();
+                outlines.add(mergedDocument.getOutlines(true));
+                outlineArg = appArgs.outlines;
+                while (outlineArg != null) {
+                    while (outlineArg.depth < outlines.size()) {
+                        outlines.remove(outlines.size() - 1);
+                    }
+                    PdfOutline parent = outlines.get(outlineArg.depth - 1);
+                    PdfOutline child = parent.addOutline(outlineArg.title);
+                    if (outlineArg.destination != null) {
+                        child.addDestination(outlineArg.destination);
+                    }
+                    outlines.add(child);
+                    outlineArg = outlineArg.next;
+                }
             }
 
             mergedDocument.close();
