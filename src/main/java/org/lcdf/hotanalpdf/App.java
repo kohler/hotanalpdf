@@ -62,9 +62,13 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import jakarta.json.Json;
 import jakarta.json.JsonArrayBuilder;
+import jakarta.json.JsonException;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonObjectBuilder;
+import jakarta.json.JsonString;
+import jakarta.json.JsonValue;
 import jakarta.json.JsonWriter;
+import jakarta.json.stream.JsonParser;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.cli.Options;
@@ -432,6 +436,7 @@ public class App {
         public int blankPages = 0;
         public boolean outputFileGiven = false;
         public String outputFile = "-";
+        public String inputJsonFile;
         public int unmodifiedStatus = 0;
         public boolean jsonOutput = false;
         public boolean checkFonts = false;
@@ -454,6 +459,9 @@ public class App {
                 optname = opt.getLongOpt();
             }
             switch (optname) {
+            case "input-json":
+                this.inputJsonFile = opt.getValue();
+                break;
             case "o":
                 this.outputFileGiven = true;
                 this.outputFile = opt.getValue();
@@ -639,6 +647,22 @@ public class App {
             }
         }
 
+        public void applyArg(String arg) {
+            if (arg.equals("@")) {
+                this.paginateFilePosition = this.inputFiles.size();
+            } else if (arg.startsWith("#")) {
+                this.applyOutline(arg);
+            } else {
+                this.inputFiles.add(arg);
+            }
+        }
+
+        public void applyJsonArg(JsonValue v) {
+            if (v instanceof JsonString) {
+                this.applyArg(((JsonString) v).getString());
+            }
+        }
+
         public void applyOutline(String title) {
             AppOutlineArg outline = new AppOutlineArg(this.inputFiles.size(), title);
             if (this.lastOutline == null) {
@@ -705,6 +729,7 @@ public class App {
         options.addOption(Option.builder("I").longOpt("image").numberOfArgs(2).argName("POS IMAGE").desc("add image to page").build());
         options.addOption(Option.builder().longOpt("redact-permissions").desc("redact ACM permissions").build());
         options.addOption(Option.builder().longOpt("kpsewhich").hasArg(true).argName("PATH").desc("kpsewhich binary").build());
+        options.addOption(Option.builder().longOpt("input-json").hasArg(true).argName("FILE").desc("read file arguments from JSON").build());
         options.addOption(Option.builder().longOpt("help").desc("print this message").build());
         int status = 0;
 
@@ -712,27 +737,35 @@ public class App {
             CommandLine cl = new DefaultParser().parse(options, args);
             AppArgs appArgs = new AppArgs();
 
-            for (int i = 0; i < cl.getArgs().length; ++i) {
-                String arg = cl.getArgs()[i];
-                if (arg.equals("@")) {
-                    appArgs.paginateFilePosition = appArgs.inputFiles.size();
-                } else if (arg.startsWith("#")) {
-                    appArgs.applyOutline(arg);
-                } else {
-                    appArgs.inputFiles.add(arg);
-                }
+            for (Option o : cl.getOptions()) {
+                appArgs.apply(o, cl);
             }
+
+            for (int i = 0; i < cl.getArgs().length; ++i) {
+                appArgs.applyArg(cl.getArgs()[i]);
+            }
+
+            if (appArgs.inputJsonFile != null) {
+                java.io.InputStream jsonStream;
+                if (appArgs.inputJsonFile.equals("")
+                    || appArgs.inputJsonFile.equals("-")) {
+                    jsonStream = System.in;
+                } else {
+                    jsonStream = new java.io.FileInputStream(appArgs.inputJsonFile);
+                }
+                JsonParser parser = Json.createParser(jsonStream);
+                if (!parser.hasNext() || parser.next() != JsonParser.Event.START_ARRAY) {
+                    throw new JsonException("expected array");
+                }
+                parser.getArrayStream().forEach(v -> appArgs.applyJsonArg(v));
+            }
+
             if (appArgs.paginateFilePosition < 0) {
                 appArgs.paginateFilePosition = 0;
             }
             if (appArgs.inputFiles.size() == 0) {
                 appArgs.inputFiles.add("-");
             }
-
-            for (Option o : cl.getOptions()) {
-                appArgs.apply(o, cl);
-            }
-
             if (appArgs.footerFontName != null) {
                 setFooterFont(appArgs, appArgs.footerFontName);
             }
@@ -963,7 +996,7 @@ public class App {
         if (appArgs.jsonOutput) {
             JsonObjectBuilder result = Json.createObjectBuilder()
                 .add("ok", true)
-                .add("at", (long) (System.currentTimeMillis() / 1000L))
+                .add("at", System.currentTimeMillis() / 1000L)
                 .add("npages", numPages);
             if (title != null && title != "") {
                 result.add("title", title);
