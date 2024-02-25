@@ -6,25 +6,15 @@ import com.itextpdf.io.font.PdfEncodings;
 import com.itextpdf.io.image.ImageData;
 import com.itextpdf.io.image.ImageDataFactory;
 import com.itextpdf.io.source.ByteUtils;
-import com.itextpdf.kernel.font.PdfFont;
-import com.itextpdf.kernel.font.PdfFontFactory;
-import com.itextpdf.kernel.geom.PageSize;
-import com.itextpdf.kernel.geom.Rectangle;
-import com.itextpdf.kernel.pdf.canvas.parser.data.IEventData;
-import com.itextpdf.kernel.pdf.canvas.parser.data.TextRenderInfo;
-import com.itextpdf.kernel.pdf.canvas.parser.EventType;
-import com.itextpdf.kernel.pdf.canvas.parser.listener.IEventListener;
-import com.itextpdf.kernel.pdf.canvas.parser.PdfCanvasProcessor;
-import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
 import com.itextpdf.kernel.pdf.PdfArray;
 import com.itextpdf.kernel.pdf.PdfDictionary;
-import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfIndirectReference;
 import com.itextpdf.kernel.pdf.PdfLiteral;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfNumber;
 import com.itextpdf.kernel.pdf.PdfObject;
+import com.itextpdf.kernel.pdf.PdfOutline;
 import com.itextpdf.kernel.pdf.PdfOutputStream;
 import com.itextpdf.kernel.pdf.PdfPage;
 import com.itextpdf.kernel.pdf.PdfReader;
@@ -32,8 +22,20 @@ import com.itextpdf.kernel.pdf.PdfResources;
 import com.itextpdf.kernel.pdf.PdfStream;
 import com.itextpdf.kernel.pdf.PdfString;
 import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
+import com.itextpdf.kernel.geom.PageSize;
+import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
+import com.itextpdf.kernel.pdf.canvas.parser.data.IEventData;
+import com.itextpdf.kernel.pdf.canvas.parser.data.TextRenderInfo;
+import com.itextpdf.kernel.pdf.canvas.parser.EventType;
+import com.itextpdf.kernel.pdf.canvas.parser.listener.IEventListener;
+import com.itextpdf.kernel.pdf.canvas.parser.PdfCanvasProcessor;
+import com.itextpdf.kernel.pdf.navigation.PdfExplicitDestination;
 import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
 import com.itextpdf.kernel.utils.PdfMerger;
+import com.itextpdf.kernel.utils.PdfMergerProperties;
 import com.itextpdf.layout.Canvas;
 import com.itextpdf.layout.element.Image;
 import com.itextpdf.layout.element.Paragraph;
@@ -377,6 +379,34 @@ public class App {
         }
     }
 
+    static public class AppOutlineArg {
+        public int filePos;
+        public int depth;
+        public String title;
+        public AppOutlineArg next = null;
+
+        public AppOutlineArg(int filePos, String decoratedTitle) throws ArrayIndexOutOfBoundsException {
+            this.filePos = filePos;
+            this.depth = 0;
+            while (this.depth < decoratedTitle.length()
+                   && decoratedTitle.charAt(this.depth) == '#') {
+                ++this.depth;
+            }
+            this.title = decoratedTitle.substring(this.depth);
+            if (this.depth <= 0) {
+                throw new ArrayIndexOutOfBoundsException();
+            }
+        }
+        public AppOutlineArg(int filePos, int depth, String title) throws ArrayIndexOutOfBoundsException {
+            this.filePos = filePos;
+            this.depth = depth;
+            this.title = title;
+            if (this.depth <= 0) {
+                throw new ArrayIndexOutOfBoundsException();
+            }
+        }
+    }
+
     static public class AppArgs {
         public boolean paginate = false;
         public int firstPage = 0;
@@ -412,6 +442,8 @@ public class App {
         public boolean redactPermissions = false;
         public boolean mayModify = false;
         public ArrayList<AppImageArg> images = new ArrayList<AppImageArg>();
+        public AppOutlineArg outlines = null;
+        public AppOutlineArg lastOutline = null;
 
         private boolean defaultPaginate = false;
         private boolean paginateRoman = false;
@@ -606,6 +638,16 @@ public class App {
                 throw new NumberFormatException();
             }
         }
+
+        public void applyOutline(String title) {
+            AppOutlineArg outline = new AppOutlineArg(this.inputFiles.size(), title);
+            if (this.lastOutline == null) {
+                this.outlines = outline;
+            } else {
+                this.lastOutline.next = outline;
+            }
+            this.lastOutline = outline;
+        }
     }
 
     public static void main(String[] args) throws IOException, NumberFormatException, ParseException {
@@ -671,10 +713,13 @@ public class App {
             AppArgs appArgs = new AppArgs();
 
             for (int i = 0; i < cl.getArgs().length; ++i) {
-                if (cl.getArgs()[i].equals("@")) {
+                String arg = cl.getArgs()[i];
+                if (arg.equals("@")) {
                     appArgs.paginateFilePosition = appArgs.inputFiles.size();
+                } else if (arg.startsWith("#")) {
+                    appArgs.applyOutline(arg);
                 } else {
-                    appArgs.inputFiles.add(cl.getArgs()[i]);
+                    appArgs.inputFiles.add(arg);
                 }
             }
             if (appArgs.paginateFilePosition < 0) {
@@ -806,15 +851,25 @@ public class App {
 
         // read and merge files
         PdfReader reader;
-        if (appArgs.inputFiles.size() > 1 || appArgs.blankPages > 0) {
+        if (appArgs.inputFiles.size() > 1
+            || appArgs.blankPages > 0
+            || appArgs.outlines != null) {
             ByteArrayOutputStream mergedOutputStream = new ByteArrayOutputStream();
             PdfDocument mergedDocument = new PdfDocument(new PdfWriter(mergedOutputStream));
             PdfMerger mergedCopy = new PdfMerger(mergedDocument);
+            ArrayList<PdfOutline> outlines = null;
+            AppOutlineArg outlineArg = appArgs.outlines;
+            if (outlineArg != null) {
+                mergedCopy = new PdfMerger(mergedDocument, new PdfMergerProperties().setMergeOutlines(false));
+                outlines = new ArrayList<PdfOutline>();
+                outlines.add(mergedDocument.getOutlines(false));
+            }
 
             int pageCount = 0;
             for (int filePos = 0; filePos < appArgs.inputFiles.size(); ++filePos) {
                 try {
                     PdfDocument doc = new PdfDocument(getInputFileReader(filePos));
+                    int firstPage = pageCount;
                     pageCount += doc.getNumberOfPages();
                     if (filePos + 1 == appArgs.paginateFilePosition
                         && appArgs.skipPagination < 0) {
@@ -825,8 +880,23 @@ public class App {
                     }
                     mergedCopy.merge(doc, 1, doc.getNumberOfPages());
                     doc.close();
+
+                    while (outlineArg != null && outlineArg.filePos == filePos) {
+                        while (outlineArg.depth < outlines.size()) {
+                            outlines.remove(outlines.size() - 1);
+                        }
+                        while (outlineArg.depth >= outlines.size()) {
+                            PdfOutline parent = outlines.get(outlines.size() - 1);
+                            String title = outlineArg.depth == outlines.size() ? outlineArg.title : "<placeholder>";
+                            PdfOutline child = parent.addOutline(title);
+                            child.addDestination(PdfExplicitDestination.createFit(mergedDocument.getPage(firstPage + 1)));
+                            outlines.add(child);
+                        }
+                        outlineArg = outlineArg.next;
+                    }
                 } catch (Exception e) {
                     addError(ERR_FAIL, "Error reading " + appArgs.inputFiles.get(filePos));
+                    System.err.println(e.toString());
                 }
             }
 
