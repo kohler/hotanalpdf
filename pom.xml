@@ -17,17 +17,17 @@
     <dependency>
       <groupId>com.itextpdf</groupId>
       <artifactId>kernel</artifactId>
-      <version>9.0.0</version>
+      <version>9.5.0</version>
     </dependency>
     <dependency>
       <groupId>com.itextpdf</groupId>
       <artifactId>io</artifactId>
-      <version>9.0.0</version>
+      <version>9.5.0</version>
     </dependency>
     <dependency>
       <groupId>com.itextpdf</groupId>
       <artifactId>layout</artifactId>
-      <version>9.0.0</version>
+      <version>9.5.0</version>
     </dependency>
     <dependency>
       <groupId>commons-io</groupId>

@@ -414,6 +414,10 @@ public class App {
     }
 
     static public class AppArgs {
+        public int fromPage = 0;
+        public int toPage = 0;
+        public int fixedFromPage = 0;
+        public int fixedToPage = 0;
         public boolean paginate = false;
         public int firstPage = 0;
         public int skipPagination = -1;
@@ -479,6 +483,20 @@ public class App {
                 this.firstPage = Integer.parseInt(opt.getValue());
                 this.defaultPaginate = true;
                 break;
+            case "only": {
+                String s = opt.getValue();
+                int dash = s.indexOf('-');
+                if (dash >= 0) {
+                    this.fixedFromPage = Integer.parseInt(s.substring(0, dash));
+                    this.fixedToPage = Integer.parseInt(s.substring(dash + 1));
+                } else {
+                    this.fixedFromPage = this.fixedToPage = Integer.parseInt(s);
+                }
+                if (this.fixedFromPage <= 0 || this.fixedToPage < this.fixedFromPage) {
+                    throw new NumberFormatException();
+                }
+                break;
+            }
             case "roman":
                 this.paginateRoman = true;
                 break;
@@ -635,12 +653,17 @@ public class App {
                 System.err.println("`--strip` requires `--js` or `--anonymity`");
                 throw new NumberFormatException();
             }
+            if (this.fixedFromPage > 0 && this.inputFiles.size() != 1) {
+                System.err.println("`--only` requires exactly one file");
+                throw new NumberFormatException();
+            }
             this.mayModify = this.paginate
                 || this.strip
                 || this.embedFonts
                 || this.blankPages > 0
                 || this.images.size() > 0
-                || this.redactPermissions;
+                || this.redactPermissions
+                || this.fixedFromPage > 0;
             if (this.mayModify
                 && this.jsonOutput
                 && this.outputFile.equals("-")) {
@@ -681,6 +704,17 @@ public class App {
         public void applyOutline(String title) {
             applyOutline(new AppOutlineArg(this.inputFiles.size(), title));
         }
+
+        public void applyPageCount(PdfDocument doc) {
+            int n = doc.getNumberOfPages();
+            if (this.fixedFromPage > 0) {
+                this.fromPage = Math.min(n, this.fixedFromPage);
+                this.toPage = Math.min(n, this.fixedToPage);
+            } else {
+                this.fromPage = 1;
+                this.toPage = n;
+            }
+        }
     }
 
     public static void main(String[] args) throws IOException, NumberFormatException, ParseException {
@@ -710,6 +744,7 @@ public class App {
         options.addOption(Option.builder("A").longOpt("check-anonymous").desc("check metadata for anonymity").build());
         options.addOption(Option.builder("s").longOpt("strip").desc("strip JS/metadata").build());
         options.addOption(Option.builder().longOpt("embed-fonts").desc("embed missing fonts when possible").build());
+        options.addOption(Option.builder().longOpt("only").desc("include only PAGES").hasArg(true).argName("PAGES").build());
         options.addOption(Option.builder("p").longOpt("paginate").desc("paginate starting at PAGENO")
                           .hasArg(true).argName("PAGENO").build());
         options.addOption(Option.builder().longOpt("roman").desc("paginate in lowercase Roman numerals").build());
@@ -840,7 +875,7 @@ public class App {
         }
     }
 
-    private PageSize calculateDefaultPageSize(PdfDocument doc) {
+    private PageSize calculateDefaultPageSize(PdfDocument doc, AppArgs args) {
         TreeMap<PageSize, Integer> pageSizeMap = new TreeMap<PageSize, Integer>(
             new java.util.Comparator<PageSize>() {
                 @Override
@@ -856,7 +891,7 @@ public class App {
                 }
             }
         );
-        for (int p = 1; p <= doc.getNumberOfPages(); ++p) {
+        for (int p = args.fromPage; p <= args.toPage; ++p) {
             PageSize thisPageSize = new PageSize(doc.getPage(p).getPageSize());
             Integer n = pageSizeMap.get(thisPageSize);
             if (n == null) {
@@ -895,7 +930,8 @@ public class App {
         PdfReader reader;
         if (appArgs.inputFiles.size() > 1
             || appArgs.blankPages > 0
-            || appArgs.outlines != null) {
+            || appArgs.outlines != null
+            || appArgs.fixedFromPage > 0) {
             ByteArrayOutputStream mergedOutputStream = new ByteArrayOutputStream();
             PdfDocument mergedDocument = new PdfDocument(new PdfWriter(mergedOutputStream));
             PdfMerger mergedCopy;
@@ -910,17 +946,18 @@ public class App {
             for (int filePos = 0; filePos < appArgs.inputFiles.size(); ++filePos) {
                 try {
                     PdfDocument doc = new PdfDocument(getInputFileReader(filePos));
+                    appArgs.applyPageCount(doc);
                     int firstPage = pageCount;
-                    pageCount += doc.getNumberOfPages();
+                    pageCount += appArgs.toPage - appArgs.fromPage;
                     if (filePos + 1 == appArgs.paginateFilePosition
                         && appArgs.skipPagination < 0) {
                         appArgs.skipPagination = pageCount;
                     }
                     if (filePos == 0) {
-                        mergedDocument.setDefaultPageSize(calculateDefaultPageSize(doc));
+                        mergedDocument.setDefaultPageSize(calculateDefaultPageSize(doc, appArgs));
                     }
 
-                    mergedCopy.merge(doc, 1, doc.getNumberOfPages());
+                    mergedCopy.merge(doc, appArgs.fromPage, appArgs.toPage);
                     doc.close();
 
                     while (outlineArg != null && outlineArg.filePos == filePos) {
