@@ -8,26 +8,25 @@
   <name>hotanalpdf</name>
   <url>http://maven.apache.org</url>
   <properties>
-    <maven.compiler.source>1.8</maven.compiler.source>
-    <maven.compiler.target>1.8</maven.compiler.target>
-    <maven.compiler.release>8</maven.compiler.release>
+    <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <itext.version>9.8.0</itext.version>
   </properties>
   <dependencies>
     <dependency>
       <groupId>com.itextpdf</groupId>
       <artifactId>kernel</artifactId>
-      <version>9.5.0</version>
+      <version>${itext.version}</version>
     </dependency>
     <dependency>
       <groupId>com.itextpdf</groupId>
       <artifactId>io</artifactId>
-      <version>9.5.0</version>
+      <version>${itext.version}</version>
     </dependency>
     <dependency>
       <groupId>com.itextpdf</groupId>
       <artifactId>layout</artifactId>
-      <version>9.5.0</version>
+      <version>${itext.version}</version>
     </dependency>
     <dependency>
       <groupId>commons-io</groupId>
@@ -112,9 +111,6 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.11.0</version>
         <configuration>
-          <source>1.8</source>
-          <target>1.8</target>
-          <release>8</release>
           <compilerArgs>
             <arg>-Xlint</arg>
           </compilerArgs>

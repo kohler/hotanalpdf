@@ -420,7 +420,6 @@ public class App {
         public int fixedToPage = 0;
         public boolean paginate = false;
         public int firstPage = 0;
-        public int skipPagination = -1;
         public int footerSize = 9;
         public String lfoot = "";
         public String cfoot = "";
@@ -439,6 +438,7 @@ public class App {
         public float footerRuleWidth = 0;
         public ArrayList<String> inputFiles = new ArrayList<String>();
         public int paginateFilePosition = -1;
+        public int paginatePagePosition = 0;
         public int blankPages = 0;
         public boolean outputFileGiven = false;
         public String outputFile = "-";
@@ -550,9 +550,6 @@ public class App {
                 this.paginate = this.paginate || this.footerRuleWidth > 0;
                 break;
             }
-            case "skip-pagination":
-                this.skipPagination = Integer.parseInt(opt.getValue());
-                break;
 
             case "append-blank":
             case "add-blank":
@@ -643,7 +640,6 @@ public class App {
 
         public void crosscheck() {
             if (this.paginateFilePosition >= this.inputFiles.size()) {
-                this.paginateFilePosition = 0;
                 this.paginate = false;
             } else if (!this.paginate && this.defaultPaginate) {
                 this.cfoot = this.paginateRoman ? "%r" : "%d";
@@ -765,8 +761,6 @@ public class App {
                           .hasArg(true).argName("").build());
         options.addOption(Option.builder().longOpt("footer-rule").desc("footer rule POSITION[,WIDTH] in points")
                           .hasArg(true).argName("").build());
-        options.addOption(Option.builder().longOpt("skip-pagination").desc("don't paginate first N pages")
-                          .hasArg(true).argName("N").build());
         options.addOption(Option.builder().longOpt("append-blank").desc("add N blank pages at end")
                           .hasArg(true).argName("N").build());
         options.addOption(Option.builder().longOpt("add-blank").hasArg(true).argName("N").build());
@@ -948,10 +942,9 @@ public class App {
                     PdfDocument doc = new PdfDocument(getInputFileReader(filePos));
                     appArgs.applyPageCount(doc);
                     int firstPage = pageCount;
-                    pageCount += appArgs.toPage - appArgs.fromPage;
-                    if (filePos + 1 == appArgs.paginateFilePosition
-                        && appArgs.skipPagination < 0) {
-                        appArgs.skipPagination = pageCount;
+                    pageCount += appArgs.toPage - appArgs.fromPage + 1;
+                    if (filePos < appArgs.paginateFilePosition) {
+                        appArgs.paginatePagePosition = pageCount;
                     }
                     if (filePos == 0) {
                         mergedDocument.setDefaultPageSize(calculateDefaultPageSize(doc, appArgs));
@@ -1165,7 +1158,7 @@ public class App {
         } else if (appArgs.footerFont == null) {
             appArgs.footerFont = lookupEmbedFont("Times-Roman").getBaseFont();
         }
-        int firstLocalPage = 1 + Math.max(appArgs.skipPagination, 0);
+        int firstLocalPage = 1 + appArgs.paginatePagePosition;
 
         for (int p = firstLocalPage; p <= thepdf.getNumberOfPages() - appArgs.blankPages; ++p) {
             int pageno = appArgs.firstPage + p - firstLocalPage;
@@ -1278,10 +1271,9 @@ public class App {
         String refname = refName(obj);
         if (viewedFontRefs.contains(refname)) {
             return true;
-        } else {
-            viewedFontRefs.add(refname);
-            return false;
         }
+        viewedFontRefs.add(refname);
+        return false;
     }
     public void checkFontsRefs(int p, PdfDictionary res, PdfName xkey) {
         PdfDictionary xres = res.getAsDictionary(xkey);
